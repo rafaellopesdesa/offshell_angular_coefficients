@@ -35,7 +35,7 @@ hatchling = ">=1.27,<2"
 hatch-vcs = ">=0.4,<1"
 
 [pypi-dependencies]
-nsbi-common-utils = { git = "https://github.com/iris-hep/nsbi-lhc-toolkit.git", rev = "fc09848fc6540fd32310faebbe9db6eea7ecd17b" }
+nsbi-common-utils = { path = "vendor/nsbi_common_utils-0.1.dev794-py3-none-any.whl" }
 
 [environments]
 analysis = []

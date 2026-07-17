@@ -17,6 +17,7 @@ The first notebook reads a local LHE file, removes the POWHEG recoil with a Born
 │   ├── lhe.py          # pylhe object selection and pandas records
 │   └── training.py     # duplicated weights and ratio normalization correction
 ├── tests/              # synthetic kinematics and a minimal LHE fixture
+├── vendor/             # pinned pure-Python nsbi-common-utils wheel and provenance
 ├── pixi.toml           # complete analysis environment
 └── pyproject.toml
 ```
@@ -87,7 +88,9 @@ pixi install -e analysis
 pixi run -e analysis test
 ```
 
-The first command resolves and installs the packages declared in `pixi.toml`. The second runs the unit tests. A correct setup currently reports seven passing tests. The environment includes `pylhe`, `vector`, `mplhep`, SciPy, pandas, PyTorch/Lightning, ONNX Runtime, Jupyter support, and a commit-pinned checkout of `nsbi-common-utils`.
+The first command resolves and installs the packages declared in `pixi.toml`. The second runs the unit tests. A correct setup currently reports seven passing tests. The environment includes `pylhe`, `vector`, `mplhep`, SciPy, pandas, PyTorch/Lightning, ONNX Runtime, Jupyter support, and a commit-pinned build of `nsbi-common-utils`.
+
+The toolkit wheel is stored under `vendor/` and was built from commit `fc09848fc6540fd32310faebbe9db6eea7ecd17b` of `iris-hep/nsbi-lhc-toolkit`. This avoids checking out the upstream repository during the Pixi solve: that repository contains Git LFS rules for large example files, while the analysis needs only its small pure-Python package. The wheel's provenance, rebuild command, and SHA-256 digest are recorded in `vendor/README.md`.
 
 The first successful solve also creates `pixi.lock`. Commit that lock file when the environment has been validated at the AF; subsequent sessions can then reconstruct the exact solve rather than only respecting the version constraints in `pixi.toml`.
 
