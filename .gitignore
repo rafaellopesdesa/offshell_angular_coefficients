@@ -1,0 +1,12 @@
+.pixi/
+.ipynb_checkpoints/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+models/
+figures/
+checkpoints/
+lightning_logs/
+data/
+*.lhe
+*.lhe.gz

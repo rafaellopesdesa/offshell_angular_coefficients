@@ -1,0 +1,46 @@
+[workspace]
+name = "offshell-angular-coefficients"
+version = "0.1.0"
+description = "Born-projected angular coefficients for off-shell H -> ZZ -> 2e2mu LHE events"
+authors = ["Rafael Coelho Lopes de Sa"]
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+python = "3.12.*"
+pip = ">=25,<26"
+git = ">=2.45"
+numpy = ">=2.0,<3"
+scipy = ">=1.15,<2"
+pandas = ">=2.2,<3"
+pylhe = ">=2.0,<3"
+vector = ">=1.6,<2"
+awkward = ">=2.7,<3"
+particle = ">=0.26,<2"
+matplotlib = ">=3.9,<4"
+mplhep = ">=0.4,<2"
+scikit-learn = ">=1.6,<2"
+pytorch = ">=2.5,<3"
+pytorch-lightning = ">=2.4,<3"
+onnx = ">=1.17,<2"
+onnxruntime = ">=1.20,<2"
+onnxscript = ">=0.2,<1"
+ipykernel = ">=6.29,<8"
+pixi-kernel = ">=0.6,<1"
+jupyterlab = ">=4.3,<5"
+nbformat = ">=5.10,<6"
+nbconvert = ">=7.16,<8"
+pytest = ">=8.3,<10"
+hatchling = ">=1.27,<2"
+hatch-vcs = ">=0.4,<1"
+
+[pypi-dependencies]
+nsbi-common-utils = { git = "https://github.com/iris-hep/nsbi-lhc-toolkit.git", rev = "fc09848fc6540fd32310faebbe9db6eea7ecd17b" }
+
+[environments]
+analysis = []
+
+[tasks]
+test = "pytest -q tests"
+lab = "jupyter lab"
+kernel = "python -m ipykernel install --user --name offshell-angular-coefficients --display-name 'Python (off-shell angular coefficients)'"
