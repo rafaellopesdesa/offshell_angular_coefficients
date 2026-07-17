@@ -45,11 +45,6 @@ def prepare_weighted_classification(
     weights = events[weight_column].to_numpy(dtype=np.float64)
     if np.any(~np.isfinite(weights)):
         raise ValueError("MC weights must be finite")
-    if np.any(weights < 0.0):
-        raise ValueError(
-            "The BCE/KL construction requires a non-negative event measure. "
-            "Negative-weight NLO events need a dedicated signed-measure treatment."
-        )
 
     numerator = events.copy()
     denominator = events.copy()

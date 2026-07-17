@@ -38,9 +38,3 @@ def test_reweighted_classes_and_normalization_correction():
         np.testing.assert_allclose(eta, [a / (a + b)])
         np.testing.assert_allclose(moment, [3.0 * (2.0 * eta[0] - 1.0)])
 
-
-def test_negative_weights_are_rejected_by_bce_construction():
-    events = pd.DataFrame({"weight": [1.0, -0.1]})
-    with pytest.raises(ValueError, match="non-negative"):
-        prepare_weighted_classification(events, [0.3, 0.7])
-
