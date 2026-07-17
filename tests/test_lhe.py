@@ -28,7 +28,7 @@ LHE_TEXT = """<LesHouchesEvents version=\"3.0\">
 """
 
 
-def test_lhe_reader_selects_objects_and_builds_observables(tmp_path: Path):
+def test_lhe_reader_uses_only_final_leptons_for_composite_objects(tmp_path: Path):
     path = tmp_path / "event.lhe"
     path.write_text(LHE_TEXT)
     events = load_lhe_dataframe(path, include_momenta=True)
@@ -36,13 +36,26 @@ def test_lhe_reader_selects_objects_and_builds_observables(tmp_path: Path):
     assert len(events) == 1
     event = events.iloc[0]
     assert event["weight"] == 2.5
-    assert event["n_higgs_lhe"] == 1
-    assert event["n_z_lhe"] == 2
-    assert event["n_final_partons"] == 1
+    assert "n_higgs_lhe" not in events
+    assert "n_z_lhe" not in events
+    assert "n_final_partons" not in events
     assert event["born_pt4l"] < 1.0e-10
     np.testing.assert_allclose(event["raw_m4l"], event["born_m4l"])
     np.testing.assert_allclose(event["raw_y4l"], event["born_y4l"])
-    for name in ("theta1", "phi1", "theta2", "phi2", "m_Z1", "m_Z2", "m_ZZ"):
+    np.testing.assert_allclose(event["m_H"], event["m_ZZ"])
+    # The explicit ID-25 record above declares m=112 GeV.  A different result
+    # proves that the Higgs candidate is reconstructed from the four leptons.
+    assert not np.isclose(event["m_H"], 112.0)
+    for name in (
+        "theta1",
+        "phi1",
+        "theta2",
+        "phi2",
+        "m_Z1",
+        "m_Z2",
+        "m_ZZ",
+        "m_H",
+    ):
         assert np.isfinite(event[name])
     assert "raw_muon_plus_E" in events
     assert "born_electron_minus_px" in events

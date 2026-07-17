@@ -29,12 +29,12 @@ PDG_TO_LEPTON_KEY = {
 
 @dataclass(frozen=True)
 class ExtractedLHEEvent:
-    """Physics objects retained from one LHE event."""
+    """Final-state leptons and their reconstructed composite systems."""
 
     leptons: dict[str, object]
-    higgs_bosons: tuple[object, ...]
-    z_bosons: tuple[object, ...]
-    final_partons: tuple[object, ...]
+    z1: object
+    z2: object
+    higgs_candidate: object
     nominal_weight: float
     alternative_weights: dict[str, float]
 
@@ -51,25 +51,15 @@ def particle_four_vector(particle):
 
 
 def extract_event_particles(event) -> ExtractedLHEEvent:
-    """Select the final 2e2mu state plus optional Higgs, Z, and jet records."""
+    """Select only the final 2e2mu state and reconstruct Z1, Z2, and H."""
 
     lepton_candidates = {key: [] for key in LEPTON_KEYS}
-    higgs_bosons = []
-    z_bosons = []
-    final_partons = []
 
     for particle in event.particles:
-        momentum = particle_four_vector(particle)
-        if particle.id == 25:
-            higgs_bosons.append(momentum)
-        if particle.id == 23:
-            z_bosons.append(momentum)
         if particle.status == 1 and particle.id in PDG_TO_LEPTON_KEY:
-            lepton_candidates[PDG_TO_LEPTON_KEY[particle.id]].append(momentum)
-        if particle.status == 1 and (
-            1 <= abs(particle.id) <= 6 or particle.id == 21
-        ):
-            final_partons.append(momentum)
+            lepton_candidates[PDG_TO_LEPTON_KEY[particle.id]].append(
+                particle_four_vector(particle)
+            )
 
     multiplicities = {
         key: len(candidates) for key, candidates in lepton_candidates.items()
@@ -81,25 +71,22 @@ def extract_event_particles(event) -> ExtractedLHEEvent:
             f"found {invalid}"
         )
 
+    leptons = {
+        key: candidates[0] for key, candidates in lepton_candidates.items()
+    }
+    z1 = leptons["muon_minus"] + leptons["muon_plus"]
+    z2 = leptons["electron_minus"] + leptons["electron_plus"]
+
     return ExtractedLHEEvent(
-        leptons={key: candidates[0] for key, candidates in lepton_candidates.items()},
-        higgs_bosons=tuple(higgs_bosons),
-        z_bosons=tuple(z_bosons),
-        final_partons=tuple(final_partons),
+        leptons=leptons,
+        z1=z1,
+        z2=z2,
+        higgs_candidate=z1 + z2,
         nominal_weight=float(event.eventinfo.weight),
         alternative_weights={
             str(key): float(value) for key, value in event.weights.items()
         },
     )
-
-
-def _object_summary(prefix: str, objects: tuple[object, ...]) -> dict[str, float | int]:
-    output: dict[str, float | int] = {f"n_{prefix}_lhe": len(objects)}
-    for index, momentum in enumerate(objects[:2]):
-        output[f"{prefix}{index + 1}_lhe_m"] = float(momentum.mass)
-        output[f"{prefix}{index + 1}_lhe_pt"] = float(momentum.pt)
-        output[f"{prefix}{index + 1}_lhe_y"] = float(momentum.rapidity)
-    return output
 
 
 def _momentum_columns(prefix: str, momenta: dict[str, object]):
@@ -140,10 +127,7 @@ def iter_lhe_records(
             "event_index": event_index,
             "weight": extracted.nominal_weight,
             "n_alternative_weights": len(extracted.alternative_weights),
-            "n_final_partons": len(extracted.final_partons),
         }
-        record.update(_object_summary("higgs", extracted.higgs_bosons))
-        record.update(_object_summary("z", extracted.z_bosons))
         record.update(projection_diagnostics_dict(diagnostics))
         record.update(angular_observables(born_leptons))
         if include_momenta:

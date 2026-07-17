@@ -273,9 +273,11 @@ def angular_observables(
 
     For the spherical-harmonic expansion, ``Omega1=(theta1,phi1)`` uses the
     positive muon in the Z1 rest frame and ``Omega2=(theta2,phi2)`` uses the
-    positron in the Z2 rest frame.  Z1 is the dimuon system and Z2 the
-    dielectron system.  The signed five-angle variables from arXiv:1208.4018
-    are returned alongside these local helicity-frame coordinates.
+    positron in the Z2 rest frame.  Z1 is reconstructed as the dimuon sum, Z2
+    as the dielectron sum, and the Higgs candidate as their four-vector sum;
+    no intermediate LHE records are used.  The signed five-angle variables
+    from arXiv:1208.4018 are returned alongside these local helicity-frame
+    coordinates.
     """
 
     selected = {key: leptons[key] for key in LEPTON_KEYS}
@@ -307,6 +309,9 @@ def angular_observables(
         "m_ZZ": float(x_system.mass),
         "y_ZZ": float(x_system.rapidity),
         "pt_ZZ": float(x_system.pt),
+        "m_H": float(x_system.mass),
+        "y_H": float(x_system.rapidity),
+        "pt_H": float(x_system.pt),
         "theta1": theta1,
         "phi1": phi1,
         "cos_theta1": cos_theta1,

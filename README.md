@@ -29,6 +29,7 @@ Generated models, plots, local LHE files, and Pixi environments are intentionall
 The implementation makes the following choices explicit:
 
 - `Z1` is always the dimuon system and `Z2` is always the dielectron system. No mass ordering is used in the off-shell region.
+- Only the final-state $e^-$, $e^+$, $\mu^-$, and $\mu^+$ records are read. The two $Z$ candidates and the Higgs candidate are reconstructed from their four-vector sums; LHE IDs 23 and 25 are deliberately ignored.
 - The harmonic coordinates $\Omega_i=(\theta_i,\phi_i)$ use the positively charged lepton in its parent-$Z$ rest frame.
 - In the Born-projected four-lepton rest frame, $\hat z_i$ follows $Z_i$, $\hat y_i$ is normal to the beam--$Z_i$ production plane, and $\hat x_i=\hat y_i\times\hat z_i$.
 - The separately named `theta1_standard` and `theta2_standard` follow the negatively charged-lepton convention of [arXiv:1208.4018](https://arxiv.org/abs/1208.4018).
@@ -132,7 +133,7 @@ MAX_EVENTS = 20_000
 
 Plain `.lhe` and gzip-compressed `.lhe.gz` files are accepted. Start with a modest `MAX_EVENTS`; after the object counts, recoil checks, and angular plots look correct, set it to `None` to process the full file.
 
-The reader requires exactly one final-state particle for each of PDG IDs $11$, $-11$, $13$, and $-13$. It records Higgs (`25`) and $Z$ (`23`) entries when the LHE history contains them, and counts final-state quarks or gluons. Reconstructed lepton pairs remain the authoritative $Z_1$ and $Z_2$ definitions even when intermediate bosons are absent.
+The reader requires exactly one final-state particle for each of PDG IDs $11$, $-11$, $13$, and $-13$. It deliberately ignores all intermediate Higgs and $Z$ records. It defines $Z_1=p_{\mu^-}+p_{\mu^+}$, $Z_2=p_{e^-}+p_{e^+}$, and $H_{\mathrm{cand}}=Z_1+Z_2$, so the result is independent of whether IDs 23 and 25 appear in the LHE history.
 
 ### 6. Validate first, then train
 
