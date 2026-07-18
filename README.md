@@ -211,13 +211,13 @@ LOAD_TRAINED_MODEL = False
 
 Rerun the training and closure cells. To reuse files already written under `models/angular_ratio/`, keep `RUN_MODEL=True` and change `LOAD_TRAINED_MODEL=True`.
 
-Before duplication, the notebook reserves 15% of source events as `validation_events` for model selection and 25% as `evaluation_events` for final closure. Every ensemble member is scored with a class-balanced binary cross entropy on the dedicated validation split. This external loss matches the two independently normalized $t$ and $1-t$ hypotheses, while avoiding the source-event leakage possible in the toolkit's internal duplicated-row split. The final evaluation sample is not used to accept or reject members. The notebook flags only high-loss members above
+Before duplication, the notebook reserves 15% of source events as `validation_events` for model selection and 25% as `evaluation_events` for final closure. Every ensemble member is scored with a class-balanced binary cross entropy on the dedicated validation split. The event weights remain signed exactly as in training: the two validation hypotheses use $w_i t_i$ and $w_i(1-t_i)$ and are independently normalized by their signed sums. This avoids the source-event leakage possible in the toolkit's internal duplicated-row split, and the final evaluation sample is not used to accept or reject members. The notebook flags only high-loss members above
 
 $$
-\operatorname{median}(L)+\max\left[5(1.4826)\operatorname{MAD}(L),\;0.05\operatorname{median}(L),\;10^{-4}\right].
+\operatorname{median}(L)+\max\left[5(1.4826)\operatorname{MAD}(L),\;0.05\left|\operatorname{median}(L)\right|,\;10^{-4}\right].
 $$
 
-A flagged slot is discarded and retrained with a distinct deterministic seed, up to `MAX_MEMBER_RETRIES = 3`. The accepted retry overwrites that ensemble index, so downstream averaging still contains exactly `ENSEMBLE_SIZE` validated members. If no retry passes, execution stops before closure rather than using a known-bad member. The displayed `validation_audit` table and loss plot record every seed, attempt, loss, threshold, and decision. `LOSS_MAD_SCALE` and `LOSS_MIN_RELATIVE_EXCESS` are explicit notebook controls; loosen them only after inspecting the loss distribution and closure behavior.
+A flagged slot is retrained with a distinct deterministic seed, up to `MAX_MEMBER_RETRIES = 3`. Non-finite predictions and caught training/inference failures are recorded as infinite-loss attempts and enter the same retry path. If a slot still fails, that member is discarded and execution continues with the remaining validated members; downstream diagnostic and closure cells automatically ignore discarded slots. The displayed `validation_audit` table and loss plot record every seed, attempt, finite loss, threshold, failure message, and decision. `LOSS_MAD_SCALE` and `LOSS_MIN_RELATIVE_EXCESS` are explicit notebook controls; loosen them only after inspecting the loss distribution and closure behavior.
 
 The NN stage constructs a coefficient-specific finite-event view and warns with the exact excluded fraction instead of failing when a small number of NaNs is present. The original `events` dataframe remains intact, so a different $(\alpha,\beta)$ component can construct its own mask.
 
@@ -230,7 +230,7 @@ The estimator duplicates each fit event:
 
 The two class weights are independently normalized for `density_ratio_trainer`. The code retains $Z_t$ and $Z_{1-t}$ and restores the factor $Z_t/Z_{1-t}$ at inference. Omitting this correction biases the recovered conditional angular moment.
 
-The BCE/KL construction requires a non-negative measure. The notebook stops if it finds negative nominal LHE weights. Do not simply take absolute values: negative-weight samples require a separately derived and validated signed-measure strategy.
+For negative-weight LHE samples, both training and model validation preserve the nominal signed weights; neither stage replaces them by absolute values. Consequently, the weighted objective is no longer a non-negative proper BCE or a literal KL divergence and can in principle be negative or unbounded below. It is used here as a like-for-like ensemble diagnostic because every member is trained and validated with the same signed prescription. The negative-weight fraction and the stability of this prescription should be documented and explicitly checked before a publication result.
 
 ### 8. Preserve reproducibility across AF sessions
 

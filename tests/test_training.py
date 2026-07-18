@@ -99,6 +99,22 @@ def test_class_balanced_validation_bce_matches_independent_normalization():
     )
 
 
+def test_class_balanced_validation_bce_preserves_signed_mc_weights():
+    scores = np.array([0.8, 0.4, 0.3])
+    target = np.array([0.2, 0.7, 0.5])
+    weights = np.array([2.0, -0.25, 1.0])
+    positive = weights * target
+    negative = weights * (1.0 - target)
+    expected = -0.5 * (
+        np.dot(positive / positive.sum(), np.log(scores))
+        + np.dot(negative / negative.sum(), np.log1p(-scores))
+    )
+
+    assert class_balanced_validation_bce(scores, target, weights) == pytest.approx(
+        expected
+    )
+
+
 def test_validation_loss_outlier_mask_rejects_only_large_high_loss():
     rejected, threshold = validation_loss_outlier_mask(
         [0.691, 0.694, 0.696, 1.8]
@@ -115,3 +131,25 @@ def test_validation_loss_outlier_mask_tolerates_seed_fluctuations():
 
     assert not rejected.any()
     assert threshold > 0.700
+
+
+def test_validation_loss_outlier_mask_retries_nonfinite_losses():
+    rejected, threshold = validation_loss_outlier_mask(
+        [0.691, np.inf, np.nan, 0.696]
+    )
+
+    np.testing.assert_array_equal(rejected, [False, True, True, False])
+    assert np.isfinite(threshold)
+
+
+def test_validation_loss_outlier_mask_retries_when_every_attempt_failed():
+    rejected, threshold = validation_loss_outlier_mask([np.inf, np.nan, np.inf])
+
+    assert rejected.all()
+    assert np.isinf(threshold)
+
+
+def test_validation_loss_outlier_mask_accepts_finite_signed_bce():
+    rejected, _ = validation_loss_outlier_mask([-0.20, -0.19, -0.18, np.inf])
+
+    np.testing.assert_array_equal(rejected, [False, False, False, True])

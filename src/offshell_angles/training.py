@@ -100,10 +100,13 @@ def class_balanced_validation_bce(
 ) -> float:
     r"""Evaluate a classifier on untouched source events.
 
-    Each source event represents both hypotheses, with weights ``w*t`` and
-    ``w*(1-t)``.  The two hypotheses are normalized independently before the
-    binary cross entropy is evaluated, matching ``density_ratio_trainer``
-    without duplicating the validation rows.
+    Each source event represents both hypotheses, with signed weights ``w*t``
+    and ``w*(1-t)``.  The two hypotheses are normalized independently by their
+    signed sums before the binary cross entropy is evaluated, exactly matching
+    the weights passed to ``density_ratio_trainer`` without duplicating the
+    validation rows.  With negative MC weights this is a signed objective, not
+    a non-negative proper scoring rule, but it remains directly comparable
+    among ensemble members trained with the same prescription.
     """
 
     scores = np.asarray(scores, dtype=np.float64).reshape(-1)
@@ -117,8 +120,8 @@ def class_balanced_validation_bce(
         raise ValueError("scores must be finite and lie in [0, 1]")
     if np.any(~np.isfinite(target)) or np.any((target < 0.0) | (target > 1.0)):
         raise ValueError("target values must be finite and lie in [0, 1]")
-    if np.any(~np.isfinite(weights)) or np.any(weights < 0.0):
-        raise ValueError("validation weights must be finite and non-negative")
+    if np.any(~np.isfinite(weights)):
+        raise ValueError("validation weights must be finite")
     if not 0.0 < score_clip < 0.5:
         raise ValueError("score_clip must lie strictly between 0 and 0.5")
 
@@ -146,28 +149,37 @@ def validation_loss_outlier_mask(
 ) -> tuple[np.ndarray, float]:
     """Flag ensemble losses above a robust, one-sided consensus threshold.
 
-    The threshold is the median plus the largest of a scaled median absolute
-    deviation, a relative margin, and an absolute numerical floor.  Requiring
-    a meaningful relative excess prevents harmless per-seed fluctuations from
-    triggering expensive retraining.
+    Non-finite losses are always rejected.  Among finite losses, the threshold
+    is the median plus the largest of a scaled median absolute deviation, a
+    relative margin, and an absolute numerical floor.  Requiring a meaningful
+    relative excess prevents harmless per-seed fluctuations from triggering
+    expensive retraining.  Finite negative values are permitted because a BCE
+    evaluated with signed MC weights is not bounded below.  If every attempt
+    failed, the returned threshold is infinite and every member is marked for
+    retry.
     """
 
     losses = np.asarray(losses, dtype=np.float64)
-    if losses.ndim != 1 or losses.size < 3:
-        raise ValueError("at least three one-dimensional losses are required")
-    if np.any(~np.isfinite(losses)) or np.any(losses < 0.0):
-        raise ValueError("losses must be finite and non-negative")
+    if losses.ndim != 1 or losses.size == 0:
+        raise ValueError("losses must be a non-empty one-dimensional array")
     if mad_scale <= 0.0:
         raise ValueError("mad_scale must be positive")
     if min_relative_excess < 0.0 or absolute_margin < 0.0:
         raise ValueError("loss margins must be non-negative")
 
-    median = float(np.median(losses))
-    mad = float(np.median(np.abs(losses - median)))
+    valid = np.isfinite(losses)
+    if not np.any(valid):
+        # There is no ensemble consensus yet. Treat every failed/non-finite
+        # attempt as retryable; a later pass can establish a finite threshold.
+        return np.ones(losses.shape, dtype=bool), float("inf")
+
+    finite_losses = losses[valid]
+    median = float(np.median(finite_losses))
+    mad = float(np.median(np.abs(finite_losses - median)))
     robust_margin = mad_scale * 1.4826 * mad
     relative_margin = min_relative_excess * max(abs(median), np.finfo(float).eps)
     threshold = median + max(robust_margin, relative_margin, absolute_margin)
-    return losses > threshold, float(threshold)
+    return (~valid) | (losses > threshold), float(threshold)
 
 
 def recover_conditional_moment(
@@ -192,4 +204,3 @@ def recover_conditional_moment(
     eta = corrected_odds / (1.0 + corrected_odds)
     moment = bound * (2.0 * eta - 1.0)
     return eta, moment
-
