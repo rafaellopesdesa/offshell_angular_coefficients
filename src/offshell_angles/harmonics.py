@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 from scipy.special import sph_harm_y
 
@@ -39,7 +41,8 @@ def inclusive_angular_coefficients(
     weights,
     *,
     l_max: int = 3,
-) -> tuple[tuple[tuple[int, int], ...], np.ndarray]:
+    return_valid_fractions: bool = False,
+):
     r"""Project all inclusive symmetric coefficients through ``l_max``.
 
     For the convention
@@ -60,9 +63,12 @@ def inclusive_angular_coefficients(
        = 4\pi\sum_i w_i
          \mathcal Y^{(+)*}_{\alpha\beta}(\Omega_{1,i},\Omega_{2,i}).
 
-    Returns the canonical mode tuple and a complex square matrix. Only entries
-    with row index ``i <= j`` are populated; the redundant lower triangle is
-    filled with complex NaNs.
+    Non-finite events are masked independently for each coefficient and a
+    warning reports the affected fraction range. Returns the canonical mode
+    tuple and a complex square matrix. Only entries with row index ``i <= j``
+    are populated; the redundant lower triangle is filled with complex NaNs.
+    If ``return_valid_fractions=True``, a matrix containing the retained event
+    fraction for each coefficient is returned as a third value.
     """
 
     modes = angular_modes(l_max)
@@ -75,11 +81,6 @@ def inclusive_angular_coefficients(
     )
     if weights.size == 0:
         raise ValueError("At least one event is required for the projection")
-    if not all(
-        np.all(np.isfinite(values))
-        for values in (theta1, phi1, theta2, phi2, weights)
-    ):
-        raise ValueError("Angles and weights must be finite")
 
     theta1 = theta1.reshape(-1)
     phi1 = phi1.reshape(-1)
@@ -87,36 +88,85 @@ def inclusive_angular_coefficients(
     phi2 = phi2.reshape(-1)
     weights = weights.reshape(-1)
 
-    # Evaluate each one-particle harmonic only once per solid angle. The
-    # weighted cross-product then projects every mode pair in one small matrix
-    # multiplication, which is substantially faster for large LHE samples.
+    # Evaluate each one-particle harmonic only once per solid angle. Pairwise
+    # masks are still constructed below because a non-finite value can affect
+    # different (alpha, beta) coefficients differently.
     harmonics1 = np.stack(
-        [sph_harm_y(ell, m, theta1, phi1) for ell, m in modes]
+        [_single_angular_harmonic(ell, m, theta1, phi1) for ell, m in modes]
     )
     harmonics2 = np.stack(
-        [sph_harm_y(ell, m, theta2, phi2) for ell, m in modes]
+        [_single_angular_harmonic(ell, m, theta2, phi2) for ell, m in modes]
     )
-    weighted_cross = (
-        np.conjugate(harmonics1) * weights[np.newaxis, :]
-    ) @ np.conjugate(harmonics2).T
 
     mode_count = len(modes)
-    normalization = np.sqrt(2.0 * (1.0 + np.eye(mode_count)))
-    full_projection = (
-        4.0
-        * np.pi
-        * (weighted_cross + weighted_cross.T)
-        / normalization
-    )
-
     coefficients = np.full(
         (mode_count, mode_count),
         np.nan + 1j * np.nan,
         dtype=np.complex128,
     )
+    valid_fractions = np.full(
+        (mode_count, mode_count),
+        np.nan,
+        dtype=np.float64,
+    )
+    finite_weights = np.isfinite(weights)
+
+    for alpha_index in range(mode_count):
+        for beta_index in range(alpha_index, mode_count):
+            identical = int(alpha_index == beta_index)
+            normalization = np.sqrt(2.0 * (1.0 + identical))
+            basis = (
+                harmonics1[alpha_index] * harmonics2[beta_index]
+                + harmonics2[alpha_index] * harmonics1[beta_index]
+            ) / normalization
+
+            valid = finite_weights & np.isfinite(basis)
+            valid_fractions[alpha_index, beta_index] = np.mean(valid)
+            if np.any(valid):
+                coefficients[alpha_index, beta_index] = (
+                    4.0
+                    * np.pi
+                    * np.sum(
+                        weights[valid] * np.conjugate(basis[valid]),
+                        dtype=np.complex128,
+                    )
+                )
+
     upper_triangle = np.triu_indices(mode_count)
-    coefficients[upper_triangle] = full_projection[upper_triangle]
+    upper_fractions = valid_fractions[upper_triangle]
+    affected = upper_fractions < 1.0
+    if np.any(affected):
+        removed = 1.0 - upper_fractions[affected]
+        affected_pairs = np.flatnonzero(affected)
+        worst_flat_index = affected_pairs[np.argmax(removed)]
+        worst_alpha = upper_triangle[0][worst_flat_index]
+        worst_beta = upper_triangle[1][worst_flat_index]
+        warnings.warn(
+            "Inclusive projection excluded non-finite events independently for "
+            f"{np.count_nonzero(affected)}/{len(upper_fractions)} coefficients; "
+            f"the removed fraction ranges from {np.min(removed):.6%} to "
+            f"{np.max(removed):.6%} (largest for alpha={modes[worst_alpha]}, "
+            f"beta={modes[worst_beta]}).",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+    if return_valid_fractions:
+        return modes, coefficients, valid_fractions
     return modes, coefficients
+
+
+def _single_angular_harmonic(ell: int, m: int, theta, phi):
+    """Evaluate one spherical harmonic, preserving the constant mode at NaNs."""
+
+    theta, phi = np.broadcast_arrays(theta, phi)
+    if ell == 0 and m == 0:
+        return np.full(
+            theta.shape,
+            1.0 / np.sqrt(4.0 * np.pi),
+            dtype=np.complex128,
+        )
+    return sph_harm_y(ell, m, theta, phi)
 
 
 def symmetric_angular_harmonic(
@@ -141,12 +191,12 @@ def symmetric_angular_harmonic(
     identical = int((l1 == l2) and (m1 == m2))
     normalization = np.sqrt(2.0 * (1.0 + identical))
 
-    direct = sph_harm_y(l1, m1, theta1, phi1) * sph_harm_y(
-        l2, m2, theta2, phi2
-    )
-    exchanged = sph_harm_y(l1, m1, theta2, phi2) * sph_harm_y(
-        l2, m2, theta1, phi1
-    )
+    direct = _single_angular_harmonic(
+        l1, m1, theta1, phi1
+    ) * _single_angular_harmonic(l2, m2, theta2, phi2)
+    exchanged = _single_angular_harmonic(
+        l1, m1, theta2, phi2
+    ) * _single_angular_harmonic(l2, m2, theta1, phi1)
     return (direct + exchanged) / normalization
 
 

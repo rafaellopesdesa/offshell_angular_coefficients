@@ -177,6 +177,8 @@ $
 
 The complete raw complex result is stored in the `inclusive_coefficients` dataframe. Two masked symmetric-log heatmaps display the real and imaginary parts normalized by $S_{00;00}$, with $\alpha$ on the horizontal axis and $\beta$ on the vertical axis. The notebook verifies numerically that $S_{00;00}=\sum_iw_i$.
 
+Non-finite weights or harmonic values are masked independently for each $(\alpha,\beta)$ projection. A runtime warning reports the range of removed event fractions, and the dataframe stores `valid_fraction` and `removed_fraction` for every coefficient. The master event dataframe is never modified; in particular, the constant $S_{00;00}$ projection still retains events whose angular coordinates are undefined, provided their weights are finite.
+
 ### 7. Validate the runtime, then train
 
 Before training, run this diagnostic cell:
@@ -208,6 +210,8 @@ LOAD_TRAINED_MODEL = False
 ```
 
 Rerun the training and closure cells. To reuse files already written under `models/angular_ratio/`, keep `RUN_MODEL=True` and change `LOAD_TRAINED_MODEL=True`.
+
+The NN stage constructs a coefficient-specific finite-event view and warns with the exact excluded fraction instead of failing when a small number of NaNs is present. The original `events` dataframe remains intact, so a different $(\alpha,\beta)$ component can construct its own mask.
 
 The notebook casts only the neural-network feature columns to `float32` before scaler fitting and ONNX inference. This matches the PyTorch-exported ONNX input type while leaving nominal MC weights and normalization calculations in `float64`. An ONNX Runtime error reporting `Actual: tensor(double), expected: tensor(float)` means this conversion did not run or stale notebook state is still in memory; restart the kernel and rerun from the feature-preparation cell.
 

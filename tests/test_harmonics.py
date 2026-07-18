@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 
 from offshell_angles import (
@@ -91,4 +93,49 @@ def test_inclusive_projection_normalization_and_triangle():
         expected,
         rtol=2.0e-14,
         atol=2.0e-14 * max(1.0, abs(expected)),
+    )
+
+
+def test_nonfinite_events_are_masked_per_coefficient():
+    theta1 = np.array([0.4, np.nan, 1.2, 2.0])
+    phi1 = np.array([0.1, np.nan, -0.3, 0.7])
+    theta2 = np.array([0.8, 1.1, 1.5, 2.4])
+    phi2 = np.array([-0.2, 0.4, 0.9, -1.0])
+    weights = np.array([1.0, 2.0, 3.0, 4.0])
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        modes, coefficients, valid_fractions = inclusive_angular_coefficients(
+            theta1,
+            phi1,
+            theta2,
+            phi2,
+            weights,
+            l_max=1,
+            return_valid_fractions=True,
+        )
+
+    assert any("removed fraction" in str(item.message) for item in caught)
+
+    constant_index = modes.index((0, 0))
+    np.testing.assert_allclose(
+        coefficients[constant_index, constant_index],
+        weights.sum(),
+    )
+    assert valid_fractions[constant_index, constant_index] == 1.0
+
+    alpha_index = modes.index((1, 0))
+    beta_index = modes.index((1, 0))
+    assert valid_fractions[alpha_index, beta_index] == 0.75
+
+    basis = symmetric_angular_harmonic(
+        theta1, phi1, theta2, phi2, 1, 0, 1, 0
+    )
+    valid = np.isfinite(weights) & np.isfinite(basis)
+    expected = 4.0 * np.pi * np.sum(
+        weights[valid] * np.conjugate(basis[valid])
+    )
+    np.testing.assert_allclose(
+        coefficients[alpha_index, beta_index],
+        expected,
     )
