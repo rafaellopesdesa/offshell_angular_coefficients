@@ -6,6 +6,119 @@ import numpy as np
 from scipy.special import sph_harm_y
 
 
+def angular_modes(l_max: int) -> tuple[tuple[int, int], ...]:
+    r"""Return canonical angular modes ordered by :math:`(\ell,m)`.
+
+    The ordering is increasing in ``ell``, then increasing in ``m``.
+    Consequently, an index pair ``i <= j`` implements
+
+    .. math::
+
+       \alpha \preceq \beta
+       \iff
+       \ell_1 < \ell_2
+       \quad\text{or}\quad
+       (\ell_1=\ell_2\ \text{and}\ m_1\leq m_2).
+    """
+
+    if not isinstance(l_max, (int, np.integer)) or l_max < 0:
+        raise ValueError("l_max must be a non-negative integer")
+
+    return tuple(
+        (ell, m)
+        for ell in range(int(l_max) + 1)
+        for m in range(-ell, ell + 1)
+    )
+
+
+def inclusive_angular_coefficients(
+    theta1,
+    phi1,
+    theta2,
+    phi2,
+    weights,
+    *,
+    l_max: int = 3,
+) -> tuple[tuple[tuple[int, int], ...], np.ndarray]:
+    r"""Project all inclusive symmetric coefficients through ``l_max``.
+
+    For the convention
+
+    .. math::
+
+       p(\Omega_1,\Omega_2)
+       = \frac{1}{4\pi}
+         \sum_{\alpha\preceq\beta}
+         S_{\alpha\beta}\,
+         \mathcal Y^{(+)}_{\alpha\beta},
+
+    the Monte Carlo estimator is
+
+    .. math::
+
+       \widehat S_{\alpha\beta}
+       = 4\pi\sum_i w_i
+         \mathcal Y^{(+)*}_{\alpha\beta}(\Omega_{1,i},\Omega_{2,i}).
+
+    Returns the canonical mode tuple and a complex square matrix. Only entries
+    with row index ``i <= j`` are populated; the redundant lower triangle is
+    filled with complex NaNs.
+    """
+
+    modes = angular_modes(l_max)
+    theta1, phi1, theta2, phi2, weights = np.broadcast_arrays(
+        np.asarray(theta1, dtype=np.float64),
+        np.asarray(phi1, dtype=np.float64),
+        np.asarray(theta2, dtype=np.float64),
+        np.asarray(phi2, dtype=np.float64),
+        np.asarray(weights, dtype=np.float64),
+    )
+    if weights.size == 0:
+        raise ValueError("At least one event is required for the projection")
+    if not all(
+        np.all(np.isfinite(values))
+        for values in (theta1, phi1, theta2, phi2, weights)
+    ):
+        raise ValueError("Angles and weights must be finite")
+
+    theta1 = theta1.reshape(-1)
+    phi1 = phi1.reshape(-1)
+    theta2 = theta2.reshape(-1)
+    phi2 = phi2.reshape(-1)
+    weights = weights.reshape(-1)
+
+    # Evaluate each one-particle harmonic only once per solid angle. The
+    # weighted cross-product then projects every mode pair in one small matrix
+    # multiplication, which is substantially faster for large LHE samples.
+    harmonics1 = np.stack(
+        [sph_harm_y(ell, m, theta1, phi1) for ell, m in modes]
+    )
+    harmonics2 = np.stack(
+        [sph_harm_y(ell, m, theta2, phi2) for ell, m in modes]
+    )
+    weighted_cross = (
+        np.conjugate(harmonics1) * weights[np.newaxis, :]
+    ) @ np.conjugate(harmonics2).T
+
+    mode_count = len(modes)
+    normalization = np.sqrt(2.0 * (1.0 + np.eye(mode_count)))
+    full_projection = (
+        4.0
+        * np.pi
+        * (weighted_cross + weighted_cross.T)
+        / normalization
+    )
+
+    coefficients = np.full(
+        (mode_count, mode_count),
+        np.nan + 1j * np.nan,
+        dtype=np.complex128,
+    )
+    upper_triangle = np.triu_indices(mode_count)
+    coefficients[upper_triangle] = full_projection[upper_triangle]
+    return modes, coefficients
+
+
 def symmetric_angular_harmonic(
     theta1,
     phi1,

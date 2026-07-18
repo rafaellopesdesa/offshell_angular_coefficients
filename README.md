@@ -12,7 +12,7 @@ The first notebook reads a local LHE file, removes the POWHEG recoil with a Born
 ├── notebooks/
 │   └── 01_lhe_angular_coefficients.ipynb
 ├── src/offshell_angles/
-│   ├── harmonics.py    # symmetric spherical harmonics, bounds, BCE targets
+│   ├── harmonics.py    # symmetric harmonics, inclusive projections, BCE targets
 │   ├── kinematics.py   # Born projection and angle definitions
 │   ├── lhe.py          # pylhe object selection and pandas records
 │   └── training.py     # duplicated weights and ratio normalization correction
@@ -33,6 +33,7 @@ The implementation makes the following choices explicit:
 - The harmonic coordinates $\Omega_i=(\theta_i,\phi_i)$ use the positively charged lepton in its parent-$Z$ rest frame.
 - In the Born-projected four-lepton rest frame, $\hat z_i$ follows $Z_i$, $\hat y_i$ is normal to the beam--$Z_i$ production plane, and $\hat x_i=\hat y_i\times\hat z_i$.
 - The separately named `theta1_standard` and `theta2_standard` follow the negatively charged-lepton convention of [arXiv:1208.4018](https://arxiv.org/abs/1208.4018).
+- Inclusive basis maps use the canonical ordering $\alpha=(\ell_1,m_1)\preceq\beta=(\ell_2,m_2)$: either $\ell_1<\ell_2$, or $\ell_1=\ell_2$ and $m_1\leq m_2$. Through $\ell_{\max}=3$, this gives 16 angular modes and 136 retained symmetric coefficients.
 - The expansion includes the requested normalization,
 
   $$
@@ -165,7 +166,18 @@ Plain `.lhe` and gzip-compressed `.lhe.gz` files are accepted. Start with a mode
 
 The reader requires exactly one final-state particle for each of PDG IDs $11$, $-11$, $13$, and $-13$. It deliberately ignores all intermediate Higgs and $Z$ records. It defines $Z_1=p_{\mu^-}+p_{\mu^+}$, $Z_2=p_{e^-}+p_{e^+}$, and $H_{\mathrm{cand}}=Z_1+Z_2$, so the result is independent of whether IDs 23 and 25 appear in the LHE history.
 
-### 6. Validate the runtime, then train
+### 6. Map the inclusive angular coefficients
+
+Before any neural-network training, the notebook evaluates all 136 coefficients with $\ell_1,\ell_2\leq3$ using
+
+$
+\widehat S_{\alpha\beta}
+=4\pi\sum_iw_i\,\mathcal Y^{(+)*}_{\alpha\beta}(\Omega_{1,i},\Omega_{2,i}).
+$
+
+The complete raw complex result is stored in the `inclusive_coefficients` dataframe. Two masked symmetric-log heatmaps display the real and imaginary parts normalized by $S_{00;00}$, with $\alpha$ on the horizontal axis and $\beta$ on the vertical axis. The notebook verifies numerically that $S_{00;00}=\sum_iw_i$.
+
+### 7. Validate the runtime, then train
 
 Before training, run this diagnostic cell:
 
@@ -208,7 +220,7 @@ The two class weights are independently normalized for `density_ratio_trainer`. 
 
 The BCE/KL construction requires a non-negative measure. The notebook stops if it finds negative nominal LHE weights. Do not simply take absolute values: negative-weight samples require a separately derived and validated signed-measure strategy.
 
-### 7. Preserve reproducibility across AF sessions
+### 8. Preserve reproducibility across AF sessions
 
 JupyterLab pods are ephemeral. Keep code, `pixi.toml`, the validated `pixi.lock`, and small configuration changes in Git. Keep LHE samples and generated model/figure directories on appropriate persistent storage, not in the repository. On a new pod, clone or pull the project and rerun `pixi install -e analysis` for CPU execution or `pixi install -e analysis-gpu` for GPU execution.
 
