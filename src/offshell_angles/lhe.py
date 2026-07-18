@@ -101,6 +101,7 @@ def iter_lhe_records(
     path: str | Path,
     *,
     max_events: int | None = None,
+    min_m_zz: float | None = None,
     strict: bool = True,
     include_momenta: bool = False,
 ) -> Iterator[dict[str, object]]:
@@ -108,7 +109,16 @@ def iter_lhe_records(
 
     With ``strict=False``, events that are not an unambiguous final-state
     ``e+ e- mu+ mu-`` topology are skipped.  Other errors are never hidden.
+    ``min_m_zz`` is applied to the four-lepton invariant mass reconstructed
+    from the final-state leptons.  The input is still scanned to exhaustion
+    when ``max_events=None``; the threshold therefore defines a physics
+    selection, not an input-reading cap.
     """
+
+    if min_m_zz is not None:
+        min_m_zz = float(min_m_zz)
+        if not np.isfinite(min_m_zz) or min_m_zz < 0.0:
+            raise ValueError("min_m_zz must be finite and non-negative")
 
     lhe_file = pylhe.LHEFile.fromfile(Path(path), with_attributes=True, generator=True)
     accepted = 0
@@ -120,6 +130,12 @@ def iter_lhe_records(
         except ValueError as exc:
             if strict:
                 raise ValueError(f"LHE event {event_index}: {exc}") from exc
+            continue
+
+        # This mass is reconstructed only from e+e-mu+mu-.  The Born map
+        # preserves it, so applying the selection here avoids unnecessary
+        # transformations for rejected events without consulting IDs 23/25.
+        if min_m_zz is not None and float(extracted.higgs_candidate.mass) < min_m_zz:
             continue
 
         born_leptons, diagnostics = born_project_four_leptons(extracted.leptons)
@@ -142,6 +158,7 @@ def load_lhe_dataframe(
     path: str | Path,
     *,
     max_events: int | None = None,
+    min_m_zz: float | None = None,
     strict: bool = True,
     include_momenta: bool = False,
 ) -> pd.DataFrame:
@@ -151,6 +168,7 @@ def load_lhe_dataframe(
         iter_lhe_records(
             path,
             max_events=max_events,
+            min_m_zz=min_m_zz,
             strict=strict,
             include_momenta=include_momenta,
         )

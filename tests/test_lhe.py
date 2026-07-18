@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-from offshell_angles import load_lhe_dataframe
+from offshell_angles import iter_lhe_records, load_lhe_dataframe
 
 
 LHE_TEXT = """<LesHouchesEvents version=\"3.0\">
@@ -59,3 +59,34 @@ def test_lhe_reader_uses_only_final_leptons_for_composite_objects(tmp_path: Path
         assert np.isfinite(event[name])
     assert "raw_muon_plus_E" in events
     assert "born_electron_minus_px" in events
+
+
+def test_mzz_preselection_uses_reconstructed_four_lepton_mass(tmp_path: Path):
+    path = tmp_path / "event.lhe"
+    path.write_text(LHE_TEXT)
+    unselected = load_lhe_dataframe(path)
+    reconstructed_m_zz = unselected.loc[0, "m_ZZ"]
+
+    selected = load_lhe_dataframe(
+        path,
+        min_m_zz=np.nextafter(reconstructed_m_zz, -np.inf),
+    )
+    assert len(selected) == 1
+    assert selected.loc[0, "weight"] == 2.5
+
+    rejected = list(
+        iter_lhe_records(
+            path,
+            min_m_zz=np.nextafter(reconstructed_m_zz, np.inf),
+        )
+    )
+    assert rejected == []
+
+
+def test_mzz_preselection_preserves_negative_event_weight(tmp_path: Path):
+    path = tmp_path / "negative_weight_event.lhe"
+    path.write_text(LHE_TEXT.replace("10 1 2.5 350.0", "10 1 -2.5 350.0"))
+
+    selected = load_lhe_dataframe(path, min_m_zz=0.0)
+
+    assert selected.loc[0, "weight"] == -2.5

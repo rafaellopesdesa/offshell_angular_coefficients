@@ -175,9 +175,10 @@ SAMPLE_CONFIG = {
         "color": "C2",
     },
 }
+M_ZZ_MIN = 180.0  # GeV
 ```
 
-Plain `.lhe` and gzip-compressed `.lhe.gz` files are accepted. The notebook deliberately calls the reader with `max_events=None`: all events in all three files are always read and used in the inclusive normalization and differential histograms. For a quick development run, use separate small LHE files rather than adding an event cap to the publication notebook.
+Plain `.lhe` and gzip-compressed `.lhe.gz` files are accepted. The reader reconstructs $m_{ZZ}$ from the four final-state leptons and applies $m_{ZZ}\geq180$ GeV before the more expensive Born transformation. The notebook deliberately calls the reader with `max_events=None`: every record in all three files is scanned, while all selected events enter the inclusive normalization and differential histograms. For a quick development run, use separate small LHE files rather than adding an event cap to the publication notebook.
 
 The reader requires exactly one final-state particle for each of PDG IDs $11$, $-11$, $13$, and $-13$. It deliberately ignores all intermediate Higgs and $Z$ records. It defines $Z_1=p_{\mu^-}+p_{\mu^+}$, $Z_2=p_{e^-}+p_{e^+}$, and $H_{\mathrm{cand}}=Z_1+Z_2$, so the result is independent of whether IDs 23 and 25 appear in the LHE history.
 
@@ -248,16 +249,16 @@ If `nvidia-smi` cannot see a device, stop and relaunch JupyterLab with a GPU ins
 
 Run the notebook through the Born-projection and angle-diagnostic cells. The changes in $m_{4\ell}$ and $y_{4\ell}$ and the projected $p_{T,4\ell}$ should be consistent with numerical precision.
 
-The notebook contains one shared training loop for both $S_{00;20}(x)$ and $S_{20;20}(x)$, avoiding any need to reload the LHE samples. To run only the direct projections and comparisons, set `RUN_MODEL = False`. To train both estimators, set:
+The notebook contains one shared training loop for six independent estimators: both $S_{00;20}(x)$ and $S_{20;20}(x)$ for each of $S$, $B$, and $S+B+I$. All three samples remain in memory, avoiding any need to reload the LHE files. This is a substantial training job—four ensemble members for each of six tasks with the default configuration—so the GPU environment is recommended. To run only the direct projections and comparisons, set `RUN_MODEL = False`. To train all six estimators, set:
 
 ```python
 RUN_MODEL = True
 LOAD_TRAINED_MODEL = False
 ```
 
-Rerun the training and closure cells. To reuse coefficient-specific files already written under `models/angular_ratio/`, keep `RUN_MODEL=True` and change `LOAD_TRAINED_MODEL=True`.
+Rerun the training and closure cells. Models and figures are isolated under `models/angular_ratio/<sample>/<coefficient>/` and `figures/angular_ratio/<sample>/<coefficient>/`. To reuse these files, keep `RUN_MODEL=True` and change `LOAD_TRAINED_MODEL=True`.
 
-For each coefficient, the notebook uses the selected complete source sample and reserves 15% of its events as `validation_events` for model selection and 25% as `evaluation_events` for final closure. Every ensemble member is scored with a class-balanced binary cross entropy on the dedicated validation split. The event weights remain signed exactly as in training: the two validation hypotheses use $w_i t_i$ and $w_i(1-t_i)$ and are independently normalized by their signed sums. This avoids the source-event leakage possible in the toolkit's internal duplicated-row split, and the final evaluation sample is not used to accept or reject members. The notebook flags only high-loss members above
+For every sample--coefficient pair, the notebook uses the selected complete source sample and reserves 15% of its events as `validation_events` for model selection and 25% as `evaluation_events` for final closure. Every ensemble member is scored with a class-balanced binary cross entropy on the dedicated validation split. The event weights remain signed exactly as in training: the two validation hypotheses use $w_i t_i$ and $w_i(1-t_i)$ and are independently normalized by their signed sums. This avoids the source-event leakage possible in the toolkit's internal duplicated-row split, and the final evaluation sample is not used to accept or reject members. The notebook flags only high-loss members above
 
 $$
 \operatorname{median}(L)+\max\left[5(1.4826)\operatorname{MAD}(L),\;0.05\left|\operatorname{median}(L)\right|,\;10^{-4}\right].
@@ -278,7 +279,20 @@ The two class weights are independently normalized for `density_ratio_trainer`. 
 
 For negative-weight LHE samples, loading, inclusive projections, differential histograms, training, validation, and closure all preserve the nominal signed weights; no stage replaces them by absolute values or removes an event merely because its weight is negative. Consequently, the weighted objective is no longer a non-negative proper BCE or a literal KL divergence and can in principle be negative or unbounded below. It is used here as a like-for-like ensemble diagnostic because every member is trained and validated with the same signed prescription. The negative-weight fraction and the stability of this prescription should be documented and explicitly checked before a publication result.
 
-### 9. Preserve reproducibility across AF sessions
+### 9. Inspect held-out closure and the final NN comparison
+
+The notebook first makes a separate held-out closure figure for each of $S$, $B$, and $S+B+I$. Each contains both coefficients and both observables, comparing the direct event-level harmonic projection with the corresponding learned conditional moment.
+
+After closure, the validated estimators are applied to every finite event in their complete preselected samples. The final four-panel figure mirrors the direct comparison and overlays the NN estimates for $S$, $B$, and $S+B+I$ in $m_{ZZ}$ and $\cos\theta^*$. It uses
+
+$$
+\widehat S^{\mathrm{NN}}_{\alpha\beta,b}
+=4\pi\sum_{i\in b}w_i\widehat h_{\alpha\beta}(x_i),
+$$
+
+with the original signed LHE weights and no $S_{00;00}$ normalization. The bands show finite-MC uncertainty conditional on the learned moment; model and ensemble uncertainties are not yet included. Because the final distributions use fit as well as held-out events to retain the selected cross-section normalization, the separate evaluation-only figures—not the full-sample curves—are the unbiased closure check.
+
+### 10. Preserve reproducibility across AF sessions
 
 JupyterLab pods are ephemeral. Keep code, `pixi.toml`, the validated `pixi.lock`, and small configuration changes in Git. Keep LHE samples and generated model/figure directories on appropriate persistent storage, not in the repository. On a new pod, clone or pull the project and rerun `pixi install -e analysis` for CPU execution or `pixi install -e analysis-gpu` for GPU execution.
 
@@ -306,7 +320,7 @@ The analysis package is intentionally small. Physics transformations live in tes
 
 ## Density-ratio caveats and validation plan
 
-The original events are split into fit, model-validation, and final-evaluation samples before the weighted duplication. Use the dedicated validation events for ensemble-member selection and the untouched evaluation events for physics closure. The toolkit currently performs its own row-level holdout split, so the two weighted copies of one source event can enter opposite internal partitions; built-in overtraining plots can therefore be optimistic for this soft-label construction.
+For each of the six training tasks, the original events are split into fit, model-validation, and final-evaluation samples before the weighted duplication. Use the dedicated validation events for ensemble-member selection and the untouched evaluation events for physics closure. The toolkit currently performs its own row-level holdout split, so the two weighted copies of one source event can enter opposite internal partitions; built-in overtraining plots can therefore be optimistic for this soft-label construction.
 
 Before using a coefficient in the publication result:
 
