@@ -4,7 +4,7 @@ This repository contains a reproducible analysis prototype for extracting differ
 
 $$H^{(*)}\to Z_1Z_2\to \mu^+\mu^-e^+e^-.$$
 
-The first notebook reads a local LHE file, removes the POWHEG recoil with a Born-like Lorentz map, constructs the four-lepton angles, and trains a conditional angular-moment estimator using the density-ratio machinery in [`nsbi-common-utils`](https://github.com/iris-hep/nsbi-lhc-toolkit).
+The first notebook reads three local LHE samples—signal ($S$), background ($B$), and signal plus background plus interference ($S+B+I$)—removes the POWHEG recoil with a Born-like Lorentz map, constructs the four-lepton angles, compares their inclusive and differential angular projections, and trains conditional angular-moment estimators using the density-ratio machinery in [`nsbi-common-utils`](https://github.com/iris-hep/nsbi-lhc-toolkit).
 
 ## Analysis contents
 
@@ -153,33 +153,79 @@ pixi run -e analysis-gpu kernel-gpu
 
 These commands register `Python (off-shell angular coefficients, CPU)` and `Python (off-shell angular coefficients, GPU)`, respectively. Prefer the facility's `pixi` kernel when available because its environment choice is stored with the notebook.
 
-### 5. Point the notebook to the LHE sample
+### 5. Point the notebook to the three complete LHE samples
 
-In the configuration cell, change:
+In the configuration cell, change the three paths:
 
 ```python
-LHE_FILE = Path("/path/visible/from/jupyter/events.lhe")
-MAX_EVENTS = 20_000
+SAMPLE_CONFIG = {
+    "signal": {
+        "label": "S",
+        "path": Path("/path/visible/from/jupyter/signal.lhe"),
+        "color": "C3",
+    },
+    "background": {
+        "label": "B",
+        "path": Path("/path/visible/from/jupyter/background.lhe"),
+        "color": "C0",
+    },
+    "signal_background_interference": {
+        "label": "S+B+I",
+        "path": Path("/path/visible/from/jupyter/sbi.lhe"),
+        "color": "C2",
+    },
+}
 ```
 
-Plain `.lhe` and gzip-compressed `.lhe.gz` files are accepted. Start with a modest `MAX_EVENTS`; after the object counts, recoil checks, and angular plots look correct, set it to `None` to process the full file.
+Plain `.lhe` and gzip-compressed `.lhe.gz` files are accepted. The notebook deliberately calls the reader with `max_events=None`: all events in all three files are always read and used in the inclusive normalization and differential histograms. For a quick development run, use separate small LHE files rather than adding an event cap to the publication notebook.
 
 The reader requires exactly one final-state particle for each of PDG IDs $11$, $-11$, $13$, and $-13$. It deliberately ignores all intermediate Higgs and $Z$ records. It defines $Z_1=p_{\mu^-}+p_{\mu^+}$, $Z_2=p_{e^-}+p_{e^+}$, and $H_{\mathrm{cand}}=Z_1+Z_2$, so the result is independent of whether IDs 23 and 25 appear in the LHE history.
 
 ### 6. Map the inclusive angular coefficients
 
-Before any neural-network training, the notebook evaluates all 136 coefficients with $\ell_1,\ell_2\leq3$ using
+Before any neural-network training, the notebook separately evaluates all 136 coefficients with $\ell_1,\ell_2\leq3$ in each of the $S$, $B$, and $S+B+I$ samples using
 
 $
 \widehat S_{\alpha\beta}
 =4\pi\sum_iw_i\,\mathcal Y^{(+)*}_{\alpha\beta}(\Omega_{1,i},\Omega_{2,i}).
 $
 
-The complete raw complex result is stored in the `inclusive_coefficients` dataframe. Two masked symmetric-log heatmaps display the real and imaginary parts normalized by $S_{00;00}$, with $\alpha$ on the horizontal axis and $\beta$ on the vertical axis. The notebook verifies numerically that $S_{00;00}=\sum_iw_i$.
+The complete raw complex results are stored in `inclusive_statistics`. For each sample, a table and four heatmaps display
 
-Non-finite weights or harmonic values are masked independently for each $(\alpha,\beta)$ projection. A runtime warning reports the range of removed event fractions, and the dataframe stores `valid_fraction` and `removed_fraction` for every coefficient. The master event dataframe is never modified; in particular, the constant $S_{00;00}$ projection still retains events whose angular coordinates are undefined, provided their weights are finite.
+1. $\operatorname{Re}(S_{\alpha\beta}/S_{00;00})$;
+2. $\operatorname{Im}(S_{\alpha\beta}/S_{00;00})$;
+3. the real-component significance; and
+4. the imaginary-component significance.
 
-### 7. Validate the runtime, then train
+The ratio uncertainty includes the Monte Carlo variance of both numerator and denominator and their event-by-event covariance. For either the real or imaginary component $A$ of $S_{\alpha\beta}$, $B=S_{00;00}$, and $R=A/B$, the notebook uses the correlated delta-method estimate
+
+$$
+\sigma_R^2
+=\frac{1}{B^2}
+\left[
+\sum_i a_i^2
++R^2\sum_i b_i^2
+-2R\sum_i a_i b_i
+\right],
+$$
+
+where $a_i=4\pi w_i\operatorname{Re/Im}[\mathcal Y^{(+)*}_{\alpha\beta,i}]$ and $b_i=w_i$. The displayed significance is $R/\sigma_R$. Thus central values and covariances retain the sign of every finite event weight; weights are squared only in the usual Monte Carlo variance terms. The notebook also verifies numerically that $S_{00;00}=\sum_iw_i$ for every sample.
+
+Non-finite weights or harmonic values are masked independently for each $(\alpha,\beta)$ projection. A runtime warning reports the range of removed event fractions, and the dataframe stores `valid_fraction` and `removed_fraction` for every coefficient. The master event dataframes are never modified; in particular, the constant $S_{00;00}$ projection still retains events whose angular coordinates are undefined, provided their weights are finite. Negative finite weights are never masked, rejected, or converted to absolute values.
+
+### 7. Compare the differential projections
+
+The notebook directly projects both requested real coefficients,
+
+$$
+S_{00;20}=4\pi\sum_iw_i\,\operatorname{Re}\mathcal Y^{(+)*}_{00;20,i},
+\qquad
+S_{20;20}=4\pi\sum_iw_i\,\operatorname{Re}\mathcal Y^{(+)*}_{20;20,i},
+$$
+
+in bins of $m_{ZZ}$ and $\cos\theta^*$. Each panel overlays $S$, $B$, and $S+B+I$ with Monte Carlo statistical bands from the sum of squared signed event contributions. These histograms are **not** divided by $S_{00;00}$, so their relative normalization and total-cross-section information are retained. Underflow and overflow are folded into the edge bins, and the notebook checks that summing the plotted bins reproduces the corresponding inclusive projection.
+
+### 8. Validate the runtime, then train
 
 Before training, run this diagnostic cell:
 
@@ -202,16 +248,16 @@ If `nvidia-smi` cannot see a device, stop and relaunch JupyterLab with a GPU ins
 
 Run the notebook through the Born-projection and angle-diagnostic cells. The changes in $m_{4\ell}$ and $y_{4\ell}$ and the projected $p_{T,4\ell}$ should be consistent with numerical precision.
 
-Training is disabled by default so that an accidental **Run All** first performs only the inexpensive validation. After inspection, set:
+The notebook contains one shared training loop for both $S_{00;20}(x)$ and $S_{20;20}(x)$, avoiding any need to reload the LHE samples. To run only the direct projections and comparisons, set `RUN_MODEL = False`. To train both estimators, set:
 
 ```python
 RUN_MODEL = True
 LOAD_TRAINED_MODEL = False
 ```
 
-Rerun the training and closure cells. To reuse files already written under `models/angular_ratio/`, keep `RUN_MODEL=True` and change `LOAD_TRAINED_MODEL=True`.
+Rerun the training and closure cells. To reuse coefficient-specific files already written under `models/angular_ratio/`, keep `RUN_MODEL=True` and change `LOAD_TRAINED_MODEL=True`.
 
-Before duplication, the notebook reserves 15% of source events as `validation_events` for model selection and 25% as `evaluation_events` for final closure. Every ensemble member is scored with a class-balanced binary cross entropy on the dedicated validation split. The event weights remain signed exactly as in training: the two validation hypotheses use $w_i t_i$ and $w_i(1-t_i)$ and are independently normalized by their signed sums. This avoids the source-event leakage possible in the toolkit's internal duplicated-row split, and the final evaluation sample is not used to accept or reject members. The notebook flags only high-loss members above
+For each coefficient, the notebook uses the selected complete source sample and reserves 15% of its events as `validation_events` for model selection and 25% as `evaluation_events` for final closure. Every ensemble member is scored with a class-balanced binary cross entropy on the dedicated validation split. The event weights remain signed exactly as in training: the two validation hypotheses use $w_i t_i$ and $w_i(1-t_i)$ and are independently normalized by their signed sums. This avoids the source-event leakage possible in the toolkit's internal duplicated-row split, and the final evaluation sample is not used to accept or reject members. The notebook flags only high-loss members above
 
 $$
 \operatorname{median}(L)+\max\left[5(1.4826)\operatorname{MAD}(L),\;0.05\left|\operatorname{median}(L)\right|,\;10^{-4}\right].
@@ -230,9 +276,9 @@ The estimator duplicates each fit event:
 
 The two class weights are independently normalized for `density_ratio_trainer`. The code retains $Z_t$ and $Z_{1-t}$ and restores the factor $Z_t/Z_{1-t}$ at inference. Omitting this correction biases the recovered conditional angular moment.
 
-For negative-weight LHE samples, both training and model validation preserve the nominal signed weights; neither stage replaces them by absolute values. Consequently, the weighted objective is no longer a non-negative proper BCE or a literal KL divergence and can in principle be negative or unbounded below. It is used here as a like-for-like ensemble diagnostic because every member is trained and validated with the same signed prescription. The negative-weight fraction and the stability of this prescription should be documented and explicitly checked before a publication result.
+For negative-weight LHE samples, loading, inclusive projections, differential histograms, training, validation, and closure all preserve the nominal signed weights; no stage replaces them by absolute values or removes an event merely because its weight is negative. Consequently, the weighted objective is no longer a non-negative proper BCE or a literal KL divergence and can in principle be negative or unbounded below. It is used here as a like-for-like ensemble diagnostic because every member is trained and validated with the same signed prescription. The negative-weight fraction and the stability of this prescription should be documented and explicitly checked before a publication result.
 
-### 8. Preserve reproducibility across AF sessions
+### 9. Preserve reproducibility across AF sessions
 
 JupyterLab pods are ephemeral. Keep code, `pixi.toml`, the validated `pixi.lock`, and small configuration changes in Git. Keep LHE samples and generated model/figure directories on appropriate persistent storage, not in the repository. On a new pod, clone or pull the project and rerun `pixi install -e analysis` for CPU execution or `pixi install -e analysis-gpu` for GPU execution.
 

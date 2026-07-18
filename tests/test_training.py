@@ -43,6 +43,34 @@ def test_reweighted_classes_and_normalization_correction():
         np.testing.assert_allclose(moment, [3.0 * (2.0 * eta[0] - 1.0)])
 
 
+def test_reweighted_classification_preserves_negative_event_weights():
+    events = pd.DataFrame(
+        {
+            "x": [0.0, 1.0, 2.0],
+            "weight": [2.0, -0.25, 1.0],
+        }
+    )
+    target = np.array([0.2, 0.7, 0.5])
+    training, normalizations = prepare_weighted_classification(events, target)
+
+    numerator = training[training["train_labels"] == 1.0].sort_values(
+        "source_event_id"
+    )
+    denominator = training[training["train_labels"] == 0.0].sort_values(
+        "source_event_id"
+    )
+    expected_numerator = events["weight"].to_numpy() * target
+    expected_denominator = events["weight"].to_numpy() * (1.0 - target)
+    np.testing.assert_allclose(numerator["weights"], expected_numerator)
+    np.testing.assert_allclose(denominator["weights"], expected_denominator)
+    assert numerator.loc[numerator["source_event_id"] == 1, "weights"].item() < 0.0
+    assert denominator.loc[denominator["source_event_id"] == 1, "weights"].item() < 0.0
+    np.testing.assert_allclose(normalizations.z_t, expected_numerator.sum())
+    np.testing.assert_allclose(
+        normalizations.z_one_minus_t, expected_denominator.sum()
+    )
+
+
 
 def test_float32_features_match_onnx_input_dtype():
     events = pd.DataFrame(

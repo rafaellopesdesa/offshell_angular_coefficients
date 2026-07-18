@@ -5,7 +5,9 @@ import numpy as np
 from offshell_angles import (
     angular_modes,
     angular_target,
+    binned_angular_coefficient,
     inclusive_angular_coefficients,
+    inclusive_angular_statistics,
     symmetric_angular_bound,
     symmetric_angular_harmonic,
 )
@@ -139,3 +141,68 @@ def test_nonfinite_events_are_masked_per_coefficient():
         coefficients[alpha_index, beta_index],
         expected,
     )
+
+
+def test_relative_uncertainty_uses_signed_weights_and_denominator_covariance():
+    theta1 = np.array([0.3, 0.8, 1.4, 2.1, 2.7])
+    phi1 = np.array([-0.5, 0.2, 1.0, -1.4, 2.2])
+    theta2 = np.array([0.7, 1.1, 1.8, 2.4, 0.5])
+    phi2 = np.array([0.4, -0.9, 1.7, 0.3, -2.0])
+    weights = np.array([2.0, -0.4, 1.2, -0.3, 0.8])
+
+    statistics = inclusive_angular_statistics(
+        theta1, phi1, theta2, phi2, weights, l_max=1
+    )
+    alpha_index = statistics.modes.index((1, 0))
+    beta_index = statistics.modes.index((1, 0))
+    basis = symmetric_angular_harmonic(
+        theta1, phi1, theta2, phi2, 1, 0, 1, 0
+    )
+    contributions = 4.0 * np.pi * weights * np.conjugate(basis)
+    numerator = contributions.real.sum()
+    denominator = weights.sum()
+    relative = numerator / denominator
+    variance = (
+        np.sum(contributions.real**2)
+        + relative**2 * np.sum(weights**2)
+        - 2.0 * relative * np.sum(contributions.real * weights)
+    ) / denominator**2
+    expected_uncertainty = np.sqrt(max(variance, 0.0))
+
+    np.testing.assert_allclose(
+        statistics.relative_coefficients[alpha_index, beta_index].real,
+        relative,
+    )
+    np.testing.assert_allclose(
+        statistics.relative_uncertainties_real[alpha_index, beta_index],
+        expected_uncertainty,
+    )
+    np.testing.assert_allclose(
+        statistics.significances_real[alpha_index, beta_index],
+        relative / expected_uncertainty,
+    )
+    np.testing.assert_allclose(statistics.relative_coefficients[0, 0], 1.0)
+    assert statistics.relative_uncertainties_real[0, 0] == 0.0
+    assert np.isnan(statistics.significances_real[0, 0])
+
+
+def test_binned_projection_preserves_signed_inclusive_sum_and_weight_squared_error():
+    observable = np.array([-2.0, -0.5, 0.2, 0.9, 3.0])
+    harmonic_component = np.array([0.1, -0.2, 0.4, 0.3, -0.1])
+    weights = np.array([1.0, -0.5, 2.0, -0.25, 0.75])
+    edges = np.array([-1.0, 0.0, 1.0])
+    result = binned_angular_coefficient(
+        observable,
+        harmonic_component,
+        weights,
+        edges,
+        fold_flow=True,
+    )
+    contributions = 4.0 * np.pi * weights * harmonic_component
+
+    np.testing.assert_allclose(result.values.sum(), contributions.sum())
+    np.testing.assert_allclose(
+        np.sum(result.uncertainties**2),
+        np.sum(contributions**2),
+    )
+    assert result.valid_fraction == 1.0

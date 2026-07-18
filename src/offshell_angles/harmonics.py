@@ -3,9 +3,39 @@
 from __future__ import annotations
 
 import warnings
+from dataclasses import dataclass
 
 import numpy as np
 from scipy.special import sph_harm_y
+
+
+@dataclass(frozen=True)
+class InclusiveAngularStatistics:
+    """Inclusive coefficients and signed-weight MC statistical information."""
+
+    modes: tuple[tuple[int, int], ...]
+    coefficients: np.ndarray
+    variances_real: np.ndarray
+    variances_imag: np.ndarray
+    covariance_real_s0000: np.ndarray
+    covariance_imag_s0000: np.ndarray
+    valid_fractions: np.ndarray
+    relative_coefficients: np.ndarray
+    relative_uncertainties_real: np.ndarray
+    relative_uncertainties_imag: np.ndarray
+    significances_real: np.ndarray
+    significances_imag: np.ndarray
+    s0000_variance: float
+
+
+@dataclass(frozen=True)
+class BinnedAngularCoefficient:
+    """A signed-weight differential coefficient and its MC uncertainty."""
+
+    bin_edges: np.ndarray
+    values: np.ndarray
+    uncertainties: np.ndarray
+    valid_fraction: float
 
 
 def angular_modes(l_max: int) -> tuple[tuple[int, int], ...]:
@@ -71,6 +101,41 @@ def inclusive_angular_coefficients(
     fraction for each coefficient is returned as a third value.
     """
 
+    statistics = inclusive_angular_statistics(
+        theta1,
+        phi1,
+        theta2,
+        phi2,
+        weights,
+        l_max=l_max,
+    )
+    if return_valid_fractions:
+        return (
+            statistics.modes,
+            statistics.coefficients,
+            statistics.valid_fractions,
+        )
+    return statistics.modes, statistics.coefficients
+
+
+def inclusive_angular_statistics(
+    theta1,
+    phi1,
+    theta2,
+    phi2,
+    weights,
+    *,
+    l_max: int = 3,
+) -> InclusiveAngularStatistics:
+    r"""Project inclusive coefficients and propagate signed-weight MC errors.
+
+    For each real or imaginary component, the variance of the weighted sum is
+    estimated from the squared *signed* event contribution.  No event weight
+    is replaced by its absolute value.  The uncertainty of
+    :math:`S_{\alpha\beta}/S_{00;00}` uses the delta method including the
+    covariance with :math:`S_{00;00}` from the same events.
+    """
+
     modes = angular_modes(l_max)
     theta1, phi1, theta2, phi2, weights = np.broadcast_arrays(
         np.asarray(theta1, dtype=np.float64),
@@ -99,17 +164,24 @@ def inclusive_angular_coefficients(
     )
 
     mode_count = len(modes)
+    shape = (mode_count, mode_count)
     coefficients = np.full(
-        (mode_count, mode_count),
+        shape,
         np.nan + 1j * np.nan,
         dtype=np.complex128,
     )
-    valid_fractions = np.full(
-        (mode_count, mode_count),
-        np.nan,
-        dtype=np.float64,
-    )
+    variances_real = np.full(shape, np.nan, dtype=np.float64)
+    variances_imag = np.full(shape, np.nan, dtype=np.float64)
+    covariance_real_s0000 = np.full(shape, np.nan, dtype=np.float64)
+    covariance_imag_s0000 = np.full(shape, np.nan, dtype=np.float64)
+    valid_fractions = np.full(shape, np.nan, dtype=np.float64)
     finite_weights = np.isfinite(weights)
+    denominator_contributions = np.zeros(weights.shape, dtype=np.float64)
+    denominator_contributions[finite_weights] = weights[finite_weights]
+    s0000 = float(np.sum(denominator_contributions, dtype=np.float64))
+    s0000_variance = float(
+        np.sum(denominator_contributions**2, dtype=np.float64)
+    )
 
     for alpha_index in range(mode_count):
         for beta_index in range(alpha_index, mode_count):
@@ -123,13 +195,28 @@ def inclusive_angular_coefficients(
             valid = finite_weights & np.isfinite(basis)
             valid_fractions[alpha_index, beta_index] = np.mean(valid)
             if np.any(valid):
-                coefficients[alpha_index, beta_index] = (
+                contributions = (
                     4.0
                     * np.pi
-                    * np.sum(
-                        weights[valid] * np.conjugate(basis[valid]),
-                        dtype=np.complex128,
-                    )
+                    * weights[valid]
+                    * np.conjugate(basis[valid])
+                )
+                coefficients[alpha_index, beta_index] = np.sum(
+                    contributions, dtype=np.complex128
+                )
+                real_contributions = contributions.real
+                imag_contributions = contributions.imag
+                variances_real[alpha_index, beta_index] = np.sum(
+                    real_contributions**2, dtype=np.float64
+                )
+                variances_imag[alpha_index, beta_index] = np.sum(
+                    imag_contributions**2, dtype=np.float64
+                )
+                covariance_real_s0000[alpha_index, beta_index] = np.sum(
+                    real_contributions * weights[valid], dtype=np.float64
+                )
+                covariance_imag_s0000[alpha_index, beta_index] = np.sum(
+                    imag_contributions * weights[valid], dtype=np.float64
                 )
 
     upper_triangle = np.triu_indices(mode_count)
@@ -151,9 +238,154 @@ def inclusive_angular_coefficients(
             stacklevel=2,
         )
 
-    if return_valid_fractions:
-        return modes, coefficients, valid_fractions
-    return modes, coefficients
+    relative_coefficients = np.full_like(coefficients, np.nan + 1j * np.nan)
+    relative_uncertainties_real = np.full(shape, np.nan, dtype=np.float64)
+    relative_uncertainties_imag = np.full(shape, np.nan, dtype=np.float64)
+    significances_real = np.full(shape, np.nan, dtype=np.float64)
+    significances_imag = np.full(shape, np.nan, dtype=np.float64)
+
+    if np.isfinite(s0000) and s0000 != 0.0:
+        for alpha_index, beta_index in zip(*upper_triangle):
+            coefficient = coefficients[alpha_index, beta_index]
+            if not np.isfinite(coefficient):
+                continue
+            relative = coefficient / s0000
+            relative_coefficients[alpha_index, beta_index] = relative
+
+            # S_00;00 / S_00;00 is identically one.  Evaluate this algebraic
+            # identity explicitly instead of relying on cancellation among
+            # three floating-point variance terms.
+            if alpha_index == 0 and beta_index == 0:
+                relative_uncertainties_real[0, 0] = 0.0
+                relative_uncertainties_imag[0, 0] = 0.0
+                continue
+
+            for component, variance_matrix, covariance_matrix, output, significance in (
+                (
+                    relative.real,
+                    variances_real,
+                    covariance_real_s0000,
+                    relative_uncertainties_real,
+                    significances_real,
+                ),
+                (
+                    relative.imag,
+                    variances_imag,
+                    covariance_imag_s0000,
+                    relative_uncertainties_imag,
+                    significances_imag,
+                ),
+            ):
+                variance = (
+                    variance_matrix[alpha_index, beta_index]
+                    + component**2 * s0000_variance
+                    - 2.0
+                    * component
+                    * covariance_matrix[alpha_index, beta_index]
+                ) / s0000**2
+                variance = max(float(variance), 0.0)
+                uncertainty = np.sqrt(variance)
+                output[alpha_index, beta_index] = uncertainty
+                if uncertainty > 0.0:
+                    significance[alpha_index, beta_index] = component / uncertainty
+
+    return InclusiveAngularStatistics(
+        modes=modes,
+        coefficients=coefficients,
+        variances_real=variances_real,
+        variances_imag=variances_imag,
+        covariance_real_s0000=covariance_real_s0000,
+        covariance_imag_s0000=covariance_imag_s0000,
+        valid_fractions=valid_fractions,
+        relative_coefficients=relative_coefficients,
+        relative_uncertainties_real=relative_uncertainties_real,
+        relative_uncertainties_imag=relative_uncertainties_imag,
+        significances_real=significances_real,
+        significances_imag=significances_imag,
+        s0000_variance=s0000_variance,
+    )
+
+
+def binned_angular_coefficient(
+    observable,
+    harmonic_component,
+    weights,
+    bin_edges,
+    *,
+    fold_flow: bool = True,
+) -> BinnedAngularCoefficient:
+    r"""Project a real angular coefficient in bins with signed MC weights.
+
+    The bin content and uncertainty are
+
+    .. math::
+
+       S_b=4\pi\sum_{i\in b}w_i h_i,
+       \qquad
+       \sigma_b=\sqrt{\sum_{i\in b}(4\pi w_i h_i)^2}.
+
+    Squaring the signed contribution provides the usual weighted-MC variance;
+    the central value always retains the original sign.  When ``fold_flow`` is
+    true, finite underflow and overflow events enter the first and last bins so
+    the sum of bin contents preserves the inclusive normalization.
+    """
+
+    observable, harmonic_component, weights = np.broadcast_arrays(
+        np.asarray(observable, dtype=np.float64),
+        np.asarray(harmonic_component, dtype=np.float64),
+        np.asarray(weights, dtype=np.float64),
+    )
+    edges = np.asarray(bin_edges, dtype=np.float64)
+    if edges.ndim != 1 or edges.size < 2:
+        raise ValueError("bin_edges must be a one-dimensional array of length >= 2")
+    if np.any(~np.isfinite(edges)) or np.any(np.diff(edges) <= 0.0):
+        raise ValueError("bin_edges must be finite and strictly increasing")
+
+    observable = observable.reshape(-1)
+    harmonic_component = harmonic_component.reshape(-1)
+    weights = weights.reshape(-1)
+    valid = (
+        np.isfinite(observable)
+        & np.isfinite(harmonic_component)
+        & np.isfinite(weights)
+    )
+    valid_fraction = float(np.mean(valid))
+    if valid_fraction < 1.0:
+        warnings.warn(
+            "Binned angular projection excluded "
+            f"{np.count_nonzero(~valid)}/{valid.size} non-finite events "
+            f"({1.0 - valid_fraction:.6%}); all finite positive and negative "
+            "weights were retained.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    values_to_bin = observable[valid]
+    if fold_flow:
+        values_to_bin = np.clip(
+            values_to_bin,
+            edges[0],
+            np.nextafter(edges[-1], edges[0]),
+        )
+
+    contributions = (
+        4.0 * np.pi * weights[valid] * harmonic_component[valid]
+    )
+    values, _ = np.histogram(
+        values_to_bin,
+        bins=edges,
+        weights=contributions,
+    )
+    variances, _ = np.histogram(
+        values_to_bin,
+        bins=edges,
+        weights=contributions**2,
+    )
+    return BinnedAngularCoefficient(
+        bin_edges=edges,
+        values=values,
+        uncertainties=np.sqrt(variances),
+        valid_fraction=valid_fraction,
+    )
 
 
 def _single_angular_harmonic(ell: int, m: int, theta, phi):
@@ -266,4 +498,3 @@ def angular_target(
 
     target = np.clip(0.5 * (1.0 + h / bound), 0.0, 1.0)
     return h, target, bound
-
