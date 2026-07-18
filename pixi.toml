@@ -20,7 +20,6 @@ particle = ">=0.26,<2"
 matplotlib = ">=3.9,<4"
 mplhep = ">=0.4,<2"
 scikit-learn = ">=1.6,<2"
-pytorch = ">=2.5,<3"
 pytorch-lightning = ">=2.4,<3"
 onnx = ">=1.17,<2"
 onnxruntime = ">=1.20,<2"
@@ -34,13 +33,25 @@ pytest = ">=8.3,<10"
 hatchling = ">=1.27,<2"
 hatch-vcs = ">=0.4,<1"
 
+[feature.cpu.dependencies]
+pytorch-cpu = ">=2.5,<3"
+
+[feature.gpu.dependencies]
+pytorch-gpu = ">=2.5,<3"
+
+[feature.gpu.system-requirements]
+cuda = "13"
+
 [pypi-dependencies]
 nsbi-common-utils = { path = "vendor/nsbi_common_utils-0.1.dev794-py3-none-any.whl" }
 
 [environments]
-analysis = []
+analysis = ["cpu"]
+analysis-gpu = ["gpu"]
 
 [tasks]
 test = "pytest -q tests"
 lab = "jupyter lab"
 kernel = "python -m ipykernel install --user --name offshell-angular-coefficients --display-name 'Python (off-shell angular coefficients)'"
+kernel-cpu = "python -m ipykernel install --user --name offshell-angular-coefficients-cpu --display-name 'Python (off-shell angular coefficients, CPU)'"
+kernel-gpu = "python -m ipykernel install --user --name offshell-angular-coefficients-gpu --display-name 'Python (off-shell angular coefficients, GPU)'"

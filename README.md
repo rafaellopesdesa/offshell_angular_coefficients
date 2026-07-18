@@ -64,8 +64,10 @@ The instructions below assume the LHE file is already on storage visible from th
 1. Sign in at [af.uchicago.edu](https://af.uchicago.edu/).
 2. Open **Services → JupyterLab**.
 3. Give the notebook server a short name without spaces.
-4. For a first functional test, request a few CPU cores, sufficient memory for the intended LHE sample, and no GPU. The density-ratio training can be moved to a GPU session later if profiling justifies it.
-5. Select `ml_platform:latest`, the facility's recommended ML image, and launch the server.
+4. Choose the resources for the intended execution mode:
+   - **CPU:** request a few CPU cores, sufficient memory for the LHE sample, and **0 GPU instances**.
+   - **GPU:** request at least **1 GPU instance**, choose an available GPU-memory option, and allocate enough CPU memory for LHE parsing and preprocessing. A Pixi environment cannot expose a GPU that was not assigned to the JupyterLab pod.
+5. Select `ml_platform:latest`, the facility's recommended ML image with CUDA support, and launch the server.
 
 The current resource limits and launch options are documented by the [UChicago Analysis Facility](https://usatlas.github.io/af-docs/uchicago/jupyter/). They can change, so use that page as the authoritative source.
 
@@ -80,20 +82,37 @@ cd offshell_angular_coefficients
 
 For HTTPS, use the repository's GitHub clone URL and the facility-supported credential flow. Do not put a personal access token in a notebook or committed file.
 
-### 3. Create the project environment
+### 3. Create the CPU or GPU project environment
 
-Pixi is provided by the `ml_platform` image. From the repository root, run:
+Pixi is provided by the `ml_platform` image. The project deliberately defines two reproducible environments:
+
+| Environment | PyTorch variant | Use it when |
+|---|---|---|
+| `analysis` | `pytorch-cpu` | The JupyterLab pod has no GPU, or only preprocessing and validation are needed. |
+| `analysis-gpu` | `pytorch-gpu` with a CUDA 13 system requirement | The JupyterLab pod was launched with one or more GPU instances. |
+
+For CPU execution, run from the repository root:
 
 ```bash
 pixi install -e analysis
 pixi run -e analysis test
 ```
 
-The first command resolves and installs the packages declared in `pixi.toml`. The second runs the unit tests. A correct setup currently reports seven passing tests. The environment includes `pylhe`, `vector`, `mplhep`, SciPy, pandas, PyTorch/Lightning, ONNX Runtime, Jupyter support, and a commit-pinned build of `nsbi-common-utils`.
+For GPU execution, run:
+
+```bash
+pixi install -e analysis-gpu
+pixi run -e analysis-gpu test
+pixi run -e analysis-gpu python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
+```
+
+The final command should print a non-`None` CUDA version, `True`, and the assigned NVIDIA device name. The tests exercise the analysis code but do not by themselves prove that the GPU is visible.
+
+Both environments include `pylhe`, `vector`, `mplhep`, SciPy, pandas, PyTorch/Lightning, ONNX Runtime, Jupyter support, and a commit-pinned build of `nsbi-common-utils`. The CPU environment avoids downloading CUDA libraries, while the GPU environment constrains conda-forge to select a CUDA-enabled PyTorch build.
 
 The toolkit wheel is stored under `vendor/` and was built from commit `fc09848fc6540fd32310faebbe9db6eea7ecd17b` of `iris-hep/nsbi-lhc-toolkit`. This avoids checking out the upstream repository during the Pixi solve: that repository contains Git LFS rules for large example files, while the analysis needs only its small pure-Python package. The wheel's provenance, rebuild command, and SHA-256 digest are recorded in `vendor/README.md`.
 
-The first successful solve also creates `pixi.lock`. Commit that lock file when the environment has been validated at the AF; subsequent sessions can then reconstruct the exact solve rather than only respecting the version constraints in `pixi.toml`.
+The committed `pixi.lock` may initially predate the GPU feature. The first `pixi install -e analysis-gpu` refreshes an out-of-date lock unless `--locked` is supplied. After validating the GPU solve at the AF, commit the refreshed lock file so later sessions reconstruct the exact CPU and GPU package builds.
 
 ### 4. Select the Pixi kernel
 
@@ -101,26 +120,37 @@ Open `notebooks/01_lhe_angular_coefficients.ipynb`, then follow the facility's `
 
 1. Click the kernel selector in the upper-right corner and select **pixi**.
 2. Open the property inspector using the gear icon in the right sidebar.
-3. Select the `analysis` environment associated with this project's `pixi.toml`.
+3. Select `analysis` for CPU execution or `analysis-gpu` for GPU execution.
 4. Save the notebook.
 5. Restart the kernel.
 
-If the environment is not listed, confirm that the notebook was opened from the cloned project and run:
+The saved error output in the training cell came from `.pixi/envs/default`, which had a CPU-only PyTorch build. Selecting the generic **pixi** kernel is not sufficient by itself: the environment in the property inspector must match the requested execution mode.
+
+If the desired environment is not listed, confirm that the notebook was opened from the cloned project and run one of:
 
 ```bash
+# CPU
 pixi install -e analysis
 pixi list -e analysis pixi-kernel
+
+# GPU
+pixi install -e analysis-gpu
+pixi list -e analysis-gpu pixi-kernel
 ```
 
 Then restart JupyterLab and repeat the selection. The [facility Pixi instructions](https://usatlas.github.io/af-docs/uchicago/jupyter/#pixi) contain the current UI workflow and troubleshooting advice.
 
-As a terminal-only fallback, the project also defines:
+As a terminal-only fallback, register a mode-specific conventional kernel:
 
 ```bash
-pixi run -e analysis kernel
+# CPU
+pixi run -e analysis kernel-cpu
+
+# GPU
+pixi run -e analysis-gpu kernel-gpu
 ```
 
-This registers a conventional user kernel named `Python (off-shell angular coefficients)`. Prefer the facility's `pixi` kernel when available because its environment choice is stored with the notebook.
+These commands register `Python (off-shell angular coefficients, CPU)` and `Python (off-shell angular coefficients, GPU)`, respectively. Prefer the facility's `pixi` kernel when available because its environment choice is stored with the notebook.
 
 ### 5. Point the notebook to the LHE sample
 
@@ -135,7 +165,26 @@ Plain `.lhe` and gzip-compressed `.lhe.gz` files are accepted. Start with a mode
 
 The reader requires exactly one final-state particle for each of PDG IDs $11$, $-11$, $13$, and $-13$. It deliberately ignores all intermediate Higgs and $Z$ records. It defines $Z_1=p_{\mu^-}+p_{\mu^+}$, $Z_2=p_{e^-}+p_{e^+}$, and $H_{\mathrm{cand}}=Z_1+Z_2$, so the result is independent of whether IDs 23 and 25 appear in the LHE history.
 
-### 6. Validate first, then train
+### 6. Validate the runtime, then train
+
+Before training, run this diagnostic cell:
+
+```python
+import sys
+import torch
+
+print("Python:", sys.executable)
+print("PyTorch:", torch.__version__)
+print("Compiled CUDA:", torch.version.cuda)
+print("CUDA available:", torch.cuda.is_available())
+print("GPU count:", torch.cuda.device_count())
+if torch.cuda.is_available():
+    print("GPU:", torch.cuda.get_device_name(0))
+```
+
+For CPU execution, the Python path should contain `.pixi/envs/analysis/`, `torch.version.cuda` should be `None`, and CUDA availability should be `False`. For GPU execution, the path should contain `.pixi/envs/analysis-gpu/`, the compiled CUDA version should be non-`None`, and availability should be `True`.
+
+If `nvidia-smi` cannot see a device, stop and relaunch JupyterLab with a GPU instance. If `nvidia-smi` sees a device but PyTorch does not, reselect `analysis-gpu` in the Pixi property inspector and restart the kernel. Lightning's `GPU available: False` and PyTorch's `pin_memory ... no accelerator` warning are expected in the CPU environment but indicate a configuration problem in the GPU environment.
 
 Run the notebook through the Born-projection and angle-diagnostic cells. The changes in $m_{4\ell}$ and $y_{4\ell}$ and the projected $p_{T,4\ell}$ should be consistent with numerical precision.
 
@@ -159,17 +208,26 @@ The BCE/KL construction requires a non-negative measure. The notebook stops if i
 
 ### 7. Preserve reproducibility across AF sessions
 
-JupyterLab pods are ephemeral. Keep code, `pixi.toml`, the validated `pixi.lock`, and small configuration changes in Git. Keep LHE samples and generated model/figure directories on appropriate persistent storage, not in the repository. On a new pod, clone or pull the project and rerun `pixi install -e analysis`.
+JupyterLab pods are ephemeral. Keep code, `pixi.toml`, the validated `pixi.lock`, and small configuration changes in Git. Keep LHE samples and generated model/figure directories on appropriate persistent storage, not in the repository. On a new pod, clone or pull the project and rerun `pixi install -e analysis` for CPU execution or `pixi install -e analysis-gpu` for GPU execution.
 
 ## Local development
 
-With Pixi installed on any compatible Linux system:
+With Pixi installed on any compatible Linux system, the CPU workflow is:
 
 ```bash
 cd offshell_angular_coefficients
 pixi install -e analysis
 pixi run -e analysis test
 pixi run -e analysis lab
+```
+
+On a Linux host with a compatible NVIDIA driver and CUDA-capable GPU, use:
+
+```bash
+cd offshell_angular_coefficients
+pixi install -e analysis-gpu
+pixi run -e analysis-gpu test
+pixi run -e analysis-gpu lab
 ```
 
 The analysis package is intentionally small. Physics transformations live in tested Python functions rather than notebook-only cells, which makes sign conventions and future changes reviewable.
