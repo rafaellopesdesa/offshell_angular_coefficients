@@ -20,8 +20,10 @@ from .lhe import (
 )
 from .training import (
     as_float32_features,
+    class_balanced_validation_bce,
     recover_conditional_moment,
     prepare_weighted_classification,
+    validation_loss_outlier_mask,
 )
 
 __all__ = [
@@ -30,6 +32,7 @@ __all__ = [
     "as_float32_features",
     "angular_target",
     "born_project_four_leptons",
+    "class_balanced_validation_bce",
     "extract_event_particles",
     "inclusive_angular_coefficients",
     "iter_lhe_records",
@@ -40,4 +43,5 @@ __all__ = [
     "standard_five_angles",
     "symmetric_angular_bound",
     "symmetric_angular_harmonic",
+    "validation_loss_outlier_mask",
 ]

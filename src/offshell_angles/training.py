@@ -91,6 +91,85 @@ def prepare_weighted_classification(
     return combined, ClassNormalizations(z_t, z_one_minus_t)
 
 
+def class_balanced_validation_bce(
+    scores,
+    target,
+    weights,
+    *,
+    score_clip: float = 1.0e-7,
+) -> float:
+    r"""Evaluate a classifier on untouched source events.
+
+    Each source event represents both hypotheses, with weights ``w*t`` and
+    ``w*(1-t)``.  The two hypotheses are normalized independently before the
+    binary cross entropy is evaluated, matching ``density_ratio_trainer``
+    without duplicating the validation rows.
+    """
+
+    scores = np.asarray(scores, dtype=np.float64).reshape(-1)
+    target = np.asarray(target, dtype=np.float64).reshape(-1)
+    weights = np.asarray(weights, dtype=np.float64).reshape(-1)
+    if not (scores.shape == target.shape == weights.shape):
+        raise ValueError("scores, target, and weights must have the same shape")
+    if scores.size == 0:
+        raise ValueError("validation arrays must not be empty")
+    if np.any(~np.isfinite(scores)) or np.any((scores < 0.0) | (scores > 1.0)):
+        raise ValueError("scores must be finite and lie in [0, 1]")
+    if np.any(~np.isfinite(target)) or np.any((target < 0.0) | (target > 1.0)):
+        raise ValueError("target values must be finite and lie in [0, 1]")
+    if np.any(~np.isfinite(weights)) or np.any(weights < 0.0):
+        raise ValueError("validation weights must be finite and non-negative")
+    if not 0.0 < score_clip < 0.5:
+        raise ValueError("score_clip must lie strictly between 0 and 0.5")
+
+    positive_weights = weights * target
+    negative_weights = weights * (1.0 - target)
+    z_positive = float(positive_weights.sum())
+    z_negative = float(negative_weights.sum())
+    if z_positive <= 0.0 or z_negative <= 0.0:
+        raise ValueError("both validation hypotheses must have positive weight")
+
+    clipped_scores = np.clip(scores, score_clip, 1.0 - score_clip)
+    positive_loss = -np.dot(positive_weights / z_positive, np.log(clipped_scores))
+    negative_loss = -np.dot(
+        negative_weights / z_negative, np.log1p(-clipped_scores)
+    )
+    return float(0.5 * (positive_loss + negative_loss))
+
+
+def validation_loss_outlier_mask(
+    losses,
+    *,
+    mad_scale: float = 5.0,
+    min_relative_excess: float = 0.05,
+    absolute_margin: float = 1.0e-4,
+) -> tuple[np.ndarray, float]:
+    """Flag ensemble losses above a robust, one-sided consensus threshold.
+
+    The threshold is the median plus the largest of a scaled median absolute
+    deviation, a relative margin, and an absolute numerical floor.  Requiring
+    a meaningful relative excess prevents harmless per-seed fluctuations from
+    triggering expensive retraining.
+    """
+
+    losses = np.asarray(losses, dtype=np.float64)
+    if losses.ndim != 1 or losses.size < 3:
+        raise ValueError("at least three one-dimensional losses are required")
+    if np.any(~np.isfinite(losses)) or np.any(losses < 0.0):
+        raise ValueError("losses must be finite and non-negative")
+    if mad_scale <= 0.0:
+        raise ValueError("mad_scale must be positive")
+    if min_relative_excess < 0.0 or absolute_margin < 0.0:
+        raise ValueError("loss margins must be non-negative")
+
+    median = float(np.median(losses))
+    mad = float(np.median(np.abs(losses - median)))
+    robust_margin = mad_scale * 1.4826 * mad
+    relative_margin = min_relative_excess * max(abs(median), np.finfo(float).eps)
+    threshold = median + max(robust_margin, relative_margin, absolute_margin)
+    return losses > threshold, float(threshold)
+
+
 def recover_conditional_moment(
     normalized_ratio,
     normalizations: ClassNormalizations,

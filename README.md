@@ -211,6 +211,14 @@ LOAD_TRAINED_MODEL = False
 
 Rerun the training and closure cells. To reuse files already written under `models/angular_ratio/`, keep `RUN_MODEL=True` and change `LOAD_TRAINED_MODEL=True`.
 
+Before duplication, the notebook reserves 15% of source events as `validation_events` for model selection and 25% as `evaluation_events` for final closure. Every ensemble member is scored with a class-balanced binary cross entropy on the dedicated validation split. This external loss matches the two independently normalized $t$ and $1-t$ hypotheses, while avoiding the source-event leakage possible in the toolkit's internal duplicated-row split. The final evaluation sample is not used to accept or reject members. The notebook flags only high-loss members above
+
+$$
+\operatorname{median}(L)+\max\left[5(1.4826)\operatorname{MAD}(L),\;0.05\operatorname{median}(L),\;10^{-4}\right].
+$$
+
+A flagged slot is discarded and retrained with a distinct deterministic seed, up to `MAX_MEMBER_RETRIES = 3`. The accepted retry overwrites that ensemble index, so downstream averaging still contains exactly `ENSEMBLE_SIZE` validated members. If no retry passes, execution stops before closure rather than using a known-bad member. The displayed `validation_audit` table and loss plot record every seed, attempt, loss, threshold, and decision. `LOSS_MAD_SCALE` and `LOSS_MIN_RELATIVE_EXCESS` are explicit notebook controls; loosen them only after inspecting the loss distribution and closure behavior.
+
 The NN stage constructs a coefficient-specific finite-event view and warns with the exact excluded fraction instead of failing when a small number of NaNs is present. The original `events` dataframe remains intact, so a different $(\alpha,\beta)$ component can construct its own mask.
 
 The notebook casts only the neural-network feature columns to `float32` before scaler fitting and ONNX inference. This matches the PyTorch-exported ONNX input type while leaving nominal MC weights and normalization calculations in `float64`. An ONNX Runtime error reporting `Actual: tensor(double), expected: tensor(float)` means this conversion did not run or stale notebook state is still in memory; restart the kernel and rerun from the feature-preparation cell.
@@ -252,7 +260,7 @@ The analysis package is intentionally small. Physics transformations live in tes
 
 ## Density-ratio caveats and validation plan
 
-The original events are split into fit and evaluation samples before the weighted duplication. Use the untouched evaluation events for physics closure. The toolkit currently performs its own row-level holdout split, so the two weighted copies of one source event can enter opposite internal partitions; built-in overtraining plots can therefore be optimistic for this soft-label construction.
+The original events are split into fit, model-validation, and final-evaluation samples before the weighted duplication. Use the dedicated validation events for ensemble-member selection and the untouched evaluation events for physics closure. The toolkit currently performs its own row-level holdout split, so the two weighted copies of one source event can enter opposite internal partitions; built-in overtraining plots can therefore be optimistic for this soft-label construction.
 
 Before using a coefficient in the publication result:
 

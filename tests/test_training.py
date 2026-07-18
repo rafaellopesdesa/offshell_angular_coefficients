@@ -5,8 +5,10 @@ from sklearn.preprocessing import MinMaxScaler
 
 from offshell_angles import (
     as_float32_features,
+    class_balanced_validation_bce,
     prepare_weighted_classification,
     recover_conditional_moment,
+    validation_loss_outlier_mask,
 )
 
 
@@ -64,3 +66,52 @@ def test_float32_features_match_onnx_input_dtype():
 def test_float32_features_reject_missing_columns():
     with pytest.raises(KeyError, match="missing"):
         as_float32_features(pd.DataFrame({"x": [1.0]}), ["missing"])
+
+
+def test_class_balanced_validation_bce_prefers_discriminating_scores():
+    target = np.array([1.0, 1.0, 0.0, 0.0])
+    weights = np.array([1.0, 3.0, 2.0, 4.0])
+
+    good_loss = class_balanced_validation_bce(
+        [0.9, 0.8, 0.2, 0.1], target, weights
+    )
+    uninformative_loss = class_balanced_validation_bce(
+        np.full(4, 0.5), target, weights
+    )
+
+    assert good_loss < uninformative_loss
+    assert uninformative_loss == pytest.approx(np.log(2.0))
+
+
+def test_class_balanced_validation_bce_matches_independent_normalization():
+    scores = np.array([0.8, 0.3])
+    target = np.array([0.25, 0.75])
+    weights = np.array([2.0, 1.0])
+    positive = weights * target
+    negative = weights * (1.0 - target)
+    expected = -0.5 * (
+        np.dot(positive / positive.sum(), np.log(scores))
+        + np.dot(negative / negative.sum(), np.log1p(-scores))
+    )
+
+    assert class_balanced_validation_bce(scores, target, weights) == pytest.approx(
+        expected
+    )
+
+
+def test_validation_loss_outlier_mask_rejects_only_large_high_loss():
+    rejected, threshold = validation_loss_outlier_mask(
+        [0.691, 0.694, 0.696, 1.8]
+    )
+
+    np.testing.assert_array_equal(rejected, [False, False, False, True])
+    assert 0.696 < threshold < 1.8
+
+
+def test_validation_loss_outlier_mask_tolerates_seed_fluctuations():
+    rejected, threshold = validation_loss_outlier_mask(
+        [0.691, 0.694, 0.696, 0.700]
+    )
+
+    assert not rejected.any()
+    assert threshold > 0.700
