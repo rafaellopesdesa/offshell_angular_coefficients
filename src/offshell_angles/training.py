@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import numpy as np
@@ -20,6 +21,26 @@ class ClassNormalizations:
         """Factor converting the normalized ratio into ``A(x)/B(x)``."""
 
         return self.z_t / self.z_one_minus_t
+
+
+def as_float32_features(
+    events: pd.DataFrame,
+    feature_columns: Iterable[str],
+) -> pd.DataFrame:
+    """Return a copy with neural-network feature columns stored as float32.
+
+    PyTorch exports the density-ratio network to ONNX with float32 inputs.
+    Scikit-learn scalers preserve the floating dtype of their inputs, so
+    float64 feature columns would otherwise reach ONNX Runtime as doubles.
+    Non-feature columns, including MC weights, retain their original dtype.
+    """
+
+    columns = list(feature_columns)
+    missing = [column for column in columns if column not in events.columns]
+    if missing:
+        raise KeyError(f"Missing feature columns: {missing}")
+
+    return events.astype({column: np.float32 for column in columns}, copy=True)
 
 
 def prepare_weighted_classification(

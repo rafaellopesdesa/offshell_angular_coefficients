@@ -197,6 +197,8 @@ LOAD_TRAINED_MODEL = False
 
 Rerun the training and closure cells. To reuse files already written under `models/angular_ratio/`, keep `RUN_MODEL=True` and change `LOAD_TRAINED_MODEL=True`.
 
+The notebook casts only the neural-network feature columns to `float32` before scaler fitting and ONNX inference. This matches the PyTorch-exported ONNX input type while leaving nominal MC weights and normalization calculations in `float64`. An ONNX Runtime error reporting `Actual: tensor(double), expected: tensor(float)` means this conversion did not run or stale notebook state is still in memory; restart the kernel and rerun from the feature-preparation cell.
+
 The estimator duplicates each fit event:
 
 - numerator weight: $w_i t_{\alpha\beta,i}$;

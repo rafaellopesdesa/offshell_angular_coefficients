@@ -17,12 +17,14 @@ from .lhe import (
     particle_four_vector,
 )
 from .training import (
+    as_float32_features,
     recover_conditional_moment,
     prepare_weighted_classification,
 )
 
 __all__ = [
     "angular_observables",
+    "as_float32_features",
     "angular_target",
     "born_project_four_leptons",
     "extract_event_particles",
